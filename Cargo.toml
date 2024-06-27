@@ -19,4 +19,4 @@ sysinfo = "0.30.12"
 open = "5.1.4"
 obws = "0.12.0"
 twitch_eventsub = { git="https://github.com/lilith645/TwitchEventSub-rs.git" }
-#twitch_eventsub = { path="../TwitchEventSub-rs" }
+#twitch_eventsub = { path="../TwitchEventSub-rs"}

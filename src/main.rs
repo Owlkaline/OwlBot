@@ -20,8 +20,8 @@ use modules::consts::*;
 use obws::Client;
 
 use twitch_eventsub::{
-  EventSubError, MessageType, SubscriptionPermission, TokenAccess, TwitchEventSubApi,
-  TwitchHttpRequest, TwitchKeys,
+  error, EventSubError, MessageType, SubscriptionPermission, TokenAccess, TwitchEventSubApi,
+  TwitchHttpRequest, TwitchKeys, *,
 };
 
 #[derive(AllVariants, Debug, Clone, PartialEq)]
@@ -152,7 +152,7 @@ fn main() {
   let keys = TwitchKeys::from_secrets_env().unwrap();
   let redirect_url = "http://localhost:3000";
 
-  let mut twitch = TwitchEventSubApi::builder(keys)
+  let mut twitch = TwitchEventSubApi::builder(keys.clone())
     .set_redirect_url(redirect_url)
     .generate_new_token_if_insufficent_scope(true)
     .generate_new_token_if_none(true)
@@ -163,6 +163,20 @@ fn main() {
     .add_subscription(SubscriptionPermission::BanTimeoutUser)
     .add_subscription(SubscriptionPermission::DeleteMessage)
     .add_subscription(SubscriptionPermission::AdBreakBegin)
+    .add_subscription(SubscriptionPermission::ChannelRaid)
+    // .add_subscription(SubscriptionPermission::Custom(("channel.chat.message".to_owned(), "user:read:chat+user:write:chat".to_owned(),
+    //   EventSubscription {
+    //     kind: "channel.chat.message".to_owned(),
+    //     version: "1".to_string(),
+    //     condition: Condition {
+    //       broadcaster_user_id: Some(keys.broadcaster_account_id.to_owned()),
+    //       moderator_user_id: None,
+    //       user_id: Some(keys.broadcaster_account_id.to_owned()),
+    //       reward_id: None,
+    //     },
+    //     transport: Transport::new(""),
+    //   })
+    //))
     .build()
     .unwrap();
 
@@ -184,9 +198,13 @@ fn main() {
             let message_id = message_data.message_id;
 
             // First time chatter!
+            let lower_message = message.to_ascii_lowercase();
             if !all_messages.contains_key(&username) && username.to_lowercase() != STREAM_ACCOUNT {
-              if message.contains("view")
-                && (message.contains("http") || message.contains(".ly") || message.contains(".to"))
+              if (lower_message.contains("view") || lower_message.contains("onlyfans"))
+                && (lower_message.contains("http")
+                  || lower_message.contains(".ly")
+                  || lower_message.contains(".com")
+                  || lower_message.contains(".to"))
               {
                 // timeout viewier because its probably a bot
                 twitch.delete_message(message_id);
@@ -311,7 +329,7 @@ fn main() {
                     }
                     ChatCommands::Github => {
                       twitch.send_chat_message(format!(
-                        "My github repos can be found at: https://github.com/lilith645",
+                        "Owl's github can be found at: https://github.com/lilith645",
                       ));
                     }
                     ChatCommands::Lurk | ChatCommands::Loork => {
@@ -322,17 +340,17 @@ fn main() {
                     }
                     ChatCommands::DotFiles => {
                       twitch.send_chat_message(format!(
-                      "You can find my linux dot files here: https://github.com/lilith645/dotfiles"
-                    ));
+                        "You can Owl's linux dot files here: https://github.com/lilith645/dotfiles"
+                      ));
                     }
                     ChatCommands::Editor => {
                       twitch.send_chat_message(format!(
-                      "I switch between Helix and Neovim currently, there is a redeem to make me do so!"
+                      "I switch between Helix , Neovim and Zed currently, there is a redeem to make Owl use a new editor!"
                     ));
                     }
                     ChatCommands::Distro => {
                       twitch.send_chat_message(format!(
-                        "The distro I am using is {} on kernel {}",
+                        "The distro Owl uses is {} on kernel {}",
                         System::long_os_version().unwrap_or("".to_string()),
                         System::kernel_version().unwrap_or("".to_string())
                       ));
@@ -381,7 +399,7 @@ fn main() {
                     }
                     ChatCommands::QOD | ChatCommands::QuestionOfTheDay => {
                       //twitch.send_chat_message("As a veiwer, do you know what you are wanting, when you click on a twitch channel?");
-                      twitch.send_chat_message("What is a language you were always interestd in but haven't had the time to learn? and why?");
+                      twitch.send_chat_message("What is the biggest hurdle in your way of doing what you want to do in life? Do you know the steps on how to overcome this hurdle?");
                     }
                     ChatCommands::Theme => {
                       twitch.send_chat_message(
@@ -417,8 +435,12 @@ fn main() {
           MessageType::SubscribeError(failed_to_subscribe) => {
             println!("Failed to subscribe to {:?}", failed_to_subscribe);
           }
+          MessageType::Error(event_sub_error) => {
+            println!("{:?}", event_sub_error);
+            error!("{:?}", event_sub_error);
+          }
           MessageType::RawResponse(raw_data) => {
-            let response = format!("Unimplemented response: {}", raw_data);
+            let response = format!("RAW response: {}", raw_data);
             println!("{}", response);
           }
           _ => {}
