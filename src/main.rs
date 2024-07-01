@@ -8,6 +8,7 @@ use std::io::{stdin, Read, Write};
 use std::process::Command;
 use std::process::Stdio;
 use std::{thread, time::Duration};
+use websocket::url::form_urlencoded::Target;
 
 use enum_all_variants::AllVariants;
 
@@ -20,8 +21,8 @@ use modules::consts::*;
 use obws::Client;
 
 use twitch_eventsub::{
-  error, EventSubError, MessageType, SubscriptionPermission, TokenAccess, TwitchEventSubApi,
-  TwitchHttpRequest, TwitchKeys, *,
+  error, Event, EventSubError, MessageType, Subscription, TokenAccess, TwitchEventSubApi,
+  TwitchHttpRequest, TwitchKeys,
 };
 
 #[derive(AllVariants, Debug, Clone, PartialEq)]
@@ -40,6 +41,7 @@ enum ChatCommands {
   Github,
   Lurk,
   Loork,
+  luwurk,
   DotFiles,
   NeoFetch,
   Editor,
@@ -104,6 +106,10 @@ impl ChatCommands {
       close_command = None;
     }
 
+    if close_command == Some(ChatCommands::Lurk) {
+      actual_command == Some(ChatCommands::Lurk);
+    }
+
     (actual_command, close_command, parameters)
   }
 
@@ -158,12 +164,44 @@ fn main() {
     .generate_new_token_if_none(true)
     .generate_access_token_on_expire(true)
     .auto_save_load_created_tokens(".user_token.env", ".refresh_token.env")
-    .add_subscription(SubscriptionPermission::ChatMessage)
-    .add_subscription(SubscriptionPermission::CustomRedeem)
-    .add_subscription(SubscriptionPermission::BanTimeoutUser)
-    .add_subscription(SubscriptionPermission::DeleteMessage)
-    .add_subscription(SubscriptionPermission::AdBreakBegin)
-    .add_subscription(SubscriptionPermission::ChannelRaid)
+    .add_subscriptions(vec![
+      //Subscription::UserUpdate,
+      //Subscription::ChannelFollow,
+      //Subscription::ChannelRaid,
+      //Subscription::ChannelUpdate,
+      //Subscription::ChannelSubscribe,
+      //Subscription::ChannelSubscriptionEnd,
+      //Subscription::ChannelSubscriptionGift,
+      //Subscription::ChannelSubscriptionMessage,
+      //Subscription::ChannelCheer,
+      //Subscription::ChannelPointsCustomRewardRedeem,
+      //Subscription::ChannelPointsAutoRewardRedeem,
+      //Subscription::ChannelPollBegin,
+      //Subscription::ChannelPollProgress,
+      //Subscription::ChannelPollEnd,
+      //Subscription::ChannelPredictionBegin,
+      //Subscription::ChannelPredictionProgress,
+      //Subscription::ChannelPredictionLock,
+      //Subscription::ChannelPredictionEnd,
+      //Subscription::ChannelGoalBegin,
+      //Subscription::ChannelGoalProgress,
+      //Subscription::ChannelGoalEnd,
+      //Subscription::ChannelHypeTrainBegin,
+      //Subscription::ChannelHypeTrainProgress,
+      //Subscription::ChannelHypeTrainEnd,
+      //Subscription::ChannelShoutoutCreate,
+      //Subscription::ChannelShoutoutReceive,
+      Subscription::ChatMessage,
+      //Subscription::BanTimeoutUser,
+      Subscription::DeleteMessage,
+      Subscription::AdBreakBegin,
+    ])
+    //.add_subscription(Subscription::ChatMessage)
+    //.add_subscription(Subscription::ChannelPointsCustomRewardRedeem)
+    //.add_subscription(Subscription::BanTimeoutUser)
+    //.add_subscription(Subscription::DeleteMessage)
+    //.add_subscription(Subscription::AdBreakBegin)
+    //.add_subscription(Subscription::ChannelRaid)
     // .add_subscription(SubscriptionPermission::Custom(("channel.chat.message".to_owned(), "user:read:chat+user:write:chat".to_owned(),
     //   EventSubscription {
     //     kind: "channel.chat.message".to_owned(),
@@ -191,10 +229,10 @@ fn main() {
     loop {
       for message in twitch.receive_messages() {
         match message {
-          MessageType::ChatMessage(message_data) => {
-            let username = message_data.username;
-            let user_id = message_data.user_id;
-            let message = message_data.message;
+          MessageType::Event(Event::ChatMessage(message_data)) => {
+            let username = message_data.chatter_user.name;
+            let user_id = message_data.chatter_user.id;
+            let message = message_data.message.text;
             let message_id = message_data.message_id;
 
             // First time chatter!
@@ -237,9 +275,17 @@ fn main() {
                   msgs[0].clone()
                 };
 
-                let new_quote = format!("{} ~ {}", quote, username.clone());
+                let mut new_quote = format!("{}", quote); //~ {}", quote, username.clone());
+                if new_quote[..6] != "!quote".to_owned() {
+                  new_quote = format!("\"{}\"", new_quote);
+                }
+                new_quote = format!("{} ~ {}", new_quote, username.to_owned());
 
-                let mut file = fs::File::options().append(true).open(QUOTES).unwrap();
+                let mut file = fs::File::options()
+                  .append(true)
+                  .create(true)
+                  .open(QUOTES)
+                  .unwrap();
                 file
                   .write_all(format!("{}\n", new_quote).as_bytes())
                   .unwrap();
@@ -269,7 +315,7 @@ fn main() {
                     // kind of special characters (Cyrillic)
                     ChatCommands::Discord => {
                       twitch.send_chat_message(format!(
-                        "Join my discord at: https://discord.gg/8pdfBzGbgB"
+                        "Join Owl's discord at: https://discord.gg/8pdfBzGbgB"
                       ));
                     }
                     ChatCommands::Optical => {
@@ -332,7 +378,7 @@ fn main() {
                         "Owl's github can be found at: https://github.com/lilith645",
                       ));
                     }
-                    ChatCommands::Lurk | ChatCommands::Loork => {
+                    ChatCommands::Lurk | ChatCommands::Loork | ChatCommands::luwurk => {
                       twitch.send_chat_message(format!(
                         "Thanks for coming by, appreciate the lurk {}!",
                         username
@@ -387,7 +433,7 @@ fn main() {
                       );
                     }
                     ChatCommands::VioletCrumble => {
-                      twitch.send_chat_message("owlkal1Vc");
+                      twitch.send_chat_message("owlkal1OC");
                     }
                     ChatCommands::SO | ChatCommands::ShoutOut => {
                       if parameters.len() > 0 {
@@ -398,8 +444,10 @@ fn main() {
                       }
                     }
                     ChatCommands::QOD | ChatCommands::QuestionOfTheDay => {
+                      twitch.send_chat_message("What is your most fond programming moment?");
                       //twitch.send_chat_message("As a veiwer, do you know what you are wanting, when you click on a twitch channel?");
-                      twitch.send_chat_message("What is the biggest hurdle in your way of doing what you want to do in life? Do you know the steps on how to overcome this hurdle?");
+                      // twitch.send_chat_message("What kind of programming challange or language do you think would be fun to see a streamer try?");
+                      //twitch.send_chat_message("What is the biggest hurdle in your way of doing what you want to do in life? Do you know the steps on how to overcome this hurdle?");
                     }
                     ChatCommands::Theme => {
                       twitch.send_chat_message(
@@ -419,22 +467,23 @@ fn main() {
                   twitch
                     .send_chat_message(format!("Did you mean to type the !{:?} command", close));
                 }
+
                 _ => {}
               }
             }
           }
-          MessageType::CustomRedeem((username, input, reward)) => {
-            println!(
-              "{} redeemed {} with {} Oxygen Atoms: {}",
-              username, reward.title, reward.cost, input,
-            );
+          MessageType::Event(e) => {
+            println!("{:#?}", e);
           }
-          MessageType::AdBreakNotification(duration) => {
-            twitch.send_chat_message(format!("A {}min Ad has attacked! sorry for any inconviences. I try my best to not do anything interesting and hope you at least get hilarious ads!", duration / 60));
-          }
-          MessageType::SubscribeError(failed_to_subscribe) => {
-            println!("Failed to subscribe to {:?}", failed_to_subscribe);
-          }
+          // MessageType::CustomRedeem((username, input, reward)) => {
+          //   println!(
+          //     "{} redeemed {} with {} Oxygen Atoms: {}",
+          //     username, reward.title, reward.cost, input,
+          //   );
+          // }
+          // MessageType::AdBreakNotification(duration) => {
+          //   twitch.send_chat_message(format!("A {}min Ad has attacked! sorry for any inconviences. I try my best to not do anything interesting and hope you at least get hilarious ads!", duration / 60));
+          // }
           MessageType::Error(event_sub_error) => {
             println!("{:?}", event_sub_error);
             error!("{:?}", event_sub_error);
