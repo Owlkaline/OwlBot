@@ -107,7 +107,7 @@ impl ChatCommands {
     }
 
     if close_command == Some(ChatCommands::Lurk) {
-      actual_command == Some(ChatCommands::Lurk);
+      actual_command = Some(ChatCommands::Lurk);
     }
 
     (actual_command, close_command, parameters)
@@ -166,14 +166,14 @@ fn main() {
     .auto_save_load_created_tokens(".user_token.env", ".refresh_token.env")
     .add_subscriptions(vec![
       //Subscription::UserUpdate,
-      //Subscription::ChannelFollow,
-      //Subscription::ChannelRaid,
+      Subscription::ChannelFollow,
+      Subscription::ChannelRaid,
       //Subscription::ChannelUpdate,
-      //Subscription::ChannelSubscribe,
+      Subscription::ChannelSubscribe,
       //Subscription::ChannelSubscriptionEnd,
-      //Subscription::ChannelSubscriptionGift,
-      //Subscription::ChannelSubscriptionMessage,
-      //Subscription::ChannelCheer,
+      Subscription::ChannelSubscriptionGift,
+      Subscription::ChannelSubscriptionMessage,
+      Subscription::ChannelCheer,
       //Subscription::ChannelPointsCustomRewardRedeem,
       //Subscription::ChannelPointsAutoRewardRedeem,
       //Subscription::ChannelPollBegin,
@@ -193,7 +193,7 @@ fn main() {
       //Subscription::ChannelShoutoutReceive,
       Subscription::ChatMessage,
       //Subscription::BanTimeoutUser,
-      Subscription::DeleteMessage,
+      //Subscription::DeleteMessage,
       Subscription::AdBreakBegin,
     ])
     //.add_subscription(Subscription::ChatMessage)
@@ -226,254 +226,337 @@ fn main() {
     let mut sys = System::new_all();
     sys.refresh_all();
 
+    let mut recent_loops: u32 = 0;
+    let mut duration = 0;
+
     loop {
-      for message in twitch.receive_messages() {
+      if recent_loops > 100 {
+        duration = 1;
+      } else {
+        recent_loops += 1;
+      }
+
+      for message in twitch.receive_messages(Duration::from_millis(duration)) {
+        recent_loops = 0;
         match message {
-          MessageType::Event(Event::ChatMessage(message_data)) => {
-            let username = message_data.chatter_user.name;
-            let user_id = message_data.chatter_user.id;
-            let message = message_data.message.text;
-            let message_id = message_data.message_id;
-
-            // First time chatter!
-            let lower_message = message.to_ascii_lowercase();
-            if !all_messages.contains_key(&username) && username.to_lowercase() != STREAM_ACCOUNT {
-              if (lower_message.contains("view") || lower_message.contains("onlyfans"))
-                && (lower_message.contains("http")
-                  || lower_message.contains(".ly")
-                  || lower_message.contains(".com")
-                  || lower_message.contains(".to"))
-              {
-                // timeout viewier because its probably a bot
-                twitch.delete_message(message_id);
-                //twitch.timeout_user(user_id, 5, "You are probably a bot, get rekt.");
-                continue;
+          MessageType::Event(event) => {
+            match event {
+              Event::Raid(raid_data) => {
+                println!(
+                  "Raid from {} with {} viewers!",
+                  raid_data.from_broadcaster.name, raid_data.viewers
+                );
+                twitch.send_chat_message(format!("!so {}", raid_data.from_broadcaster.name));
               }
-            }
-
-            if username.to_lowercase() == STREAM_ACCOUNT {
-              println!("{}", message);
-            } else {
-              println!("{}: {}", username, message);
-            }
-            // comment
-            all_messages
-              .entry(username.clone())
-              .and_modify(|msg: &mut Vec<String>| msg.push(message.clone()))
-              .or_insert(vec![message.clone()]);
-
-            let possible_quote = message.to_ascii_lowercase();
-            if (possible_quote.contains("don't quote")
-              || possible_quote.contains("dont quote")
-              || possible_quote.contains("do not quote"))
-              && username.to_lowercase() != STREAM_ACCOUNT
-            {
-              if let Some(msgs) = all_messages.get(&username) {
-                let quote = if msgs.len() > 1 {
-                  msgs[msgs.len() - 2].clone()
-                } else {
-                  msgs[0].clone()
-                };
-
-                let mut new_quote = format!("{}", quote); //~ {}", quote, username.clone());
-                if new_quote[..6] != "!quote".to_owned() {
-                  new_quote = format!("\"{}\"", new_quote);
+              Event::AdBreakBegin(break_data) => {
+                twitch.send_chat_message(format!(
+                  "A {}min Ad has attacked! I try my best to not do anything interesting.",
+                  break_data.duration_seconds / 60
+                ));
+              }
+              Event::PointsCustomRewardRedeem(reward) => {
+                println!("{} redeemed {}", reward.user.name, reward.reward.title);
+                if !reward.user_input.is_empty() {
+                  println!("    with input: {}", reward.user_input);
                 }
-                new_quote = format!("{} ~ {}", new_quote, username.to_owned());
-
-                let mut file = fs::File::options()
-                  .append(true)
-                  .create(true)
-                  .open(QUOTES)
-                  .unwrap();
-                file
-                  .write_all(format!("{}\n", new_quote).as_bytes())
-                  .unwrap();
               }
-            }
+              Event::Subscribe(subscription) => {
+                if subscription.is_gift {
+                  println!(
+                    "{} recieved a tier {} subscription!",
+                    subscription.user.name, subscription.tier
+                  );
+                } else {
+                  println!(
+                    "{} subscribed with a tier {} sub!",
+                    subscription.user.name, subscription.tier
+                  );
+                }
+              }
+              Event::SubscriptionGift(gifty) => {
+                println!(
+                  "{} Generously Gifted {} tier {} subscriptions!",
+                  gifty.user.name, gifty.total, gifty.tier
+                );
+              }
+              Event::SubscriptionMessage(subscription) => {
+                println!(
+                  "{} subscribed with a tier {} sub!",
+                  subscription.user.name, subscription.tier
+                );
+                println!("    {}", subscription.message.text);
+              }
+              Event::Cheer(cheer) => {
+                println!("{} cheered with {} bits!", cheer.user.name, cheer.bits);
+              }
+              Event::HypeTrainBegin(hype_train) => {
+                println!("A hype train has begun!");
+              }
+              Event::HypeTrainEnd(hype_end) => {
+                println!("The hype train ended at level {}!", hype_end.level);
+              }
+              Event::ChatMessage(message_data) => {
+                let username = message_data.chatter.name;
+                let user_id = message_data.chatter.id;
+                let message = message_data.message.text;
+                let message_id = message_data.message_id;
 
-            let message = message.to_ascii_lowercase();
-
-            if message.as_bytes()[0] as char == '!' {
-              match ChatCommands::is_command(&String::from_utf8_lossy(&message.as_bytes()[1..])) {
-                (Some(command), None, parameters) => {
-                  match command {
-                    ChatCommands::Hello => {
-                      twitch.send_chat_message(format!("Welcome to the stream {}! owlkal1LHand owlkal1Leye owlkal1Yap owlkal1Reye owlkal1RHand", username));
-                    }
-                    ChatCommands::Meat => {
-                      twitch.send_chat_message(format!(
-                        "Find out what happened to your meat today! https://youtu.be/7tScAyNaRdQ"
-                      ));
-                    }
-                    ChatCommands::Processing => {
-                      twitch.send_chat_message(format!(
-                          "Neat little programming program for protoyping, check it out: https://processing.org/"
-                     ));
-                    }
-                    // Second discord that looks normal is actually some
-                    // kind of special characters (Cyrillic)
-                    ChatCommands::Discord => {
-                      twitch.send_chat_message(format!(
-                        "Join Owl's discord at: https://discord.gg/8pdfBzGbgB"
-                      ));
-                    }
-                    ChatCommands::Optical => {
-                      twitch.send_chat_message(format!(
-                      "Optical illusion here: https://media.discordapp.net/attachments/691453928709292032/1241676080226762814/opticalIllusion.png?ex=66559c76&is=66544af6&hm=7c46b66eba9defe28cd42ab7a139af97b9c9646fc7ce0634cea49641cada8262&=&format=webp&quality=lossless&width=907&height=510"
-                    ));
-                    }
-                    ChatCommands::Throne => {
-                      twitch.send_chat_message(format!(
-                        "Throne wishlist: https://throne.com/owlkaline"
-                      ));
-                    }
-                    ChatCommands::Owlyfans => {
-                      twitch.send_chat_message(format!(
-                        "To Support the Owl more, Support on OwlyFans: https://ko-fi.com/owlkaline"
-                      ));
-                    }
-                    ChatCommands::HowToQuote => {
-                      twitch.send_chat_message(
-                        "Type \"don\'t quote\" to quote your previous message!".to_string(),
-                      );
-                    }
-                    ChatCommands::Quote => {
-                      if let Ok(quotes) = fs::read_to_string(QUOTES) {
-                        let lines = quotes.lines().collect::<Vec<_>>();
-
-                        let line_count = lines.len() as f32;
-                        let rng = rng.gen::<f32>();
-
-                        let idx = (rng * line_count).floor() as usize;
-
-                        let quote = lines[idx];
-                        twitch.send_chat_message(quote.to_string());
-                      } else {
-                        twitch.send_chat_message(format!("The quotes were cleared! Make your own quote by sending the quote in chat, then have your next message contain \"don\'t quote me\" to create a quote."));
-                      }
-                    }
-                    ChatCommands::Commands => {
-                      let mut all_commands = "The Following commands exist:\n".to_string();
-                      for variant in ChatCommands::all_variants() {
-                        all_commands = format!("{}!{:?}\n", all_commands, variant);
-                      }
-                      twitch.send_chat_message(all_commands);
-                    }
-                    ChatCommands::Ram => {
-                      sys.refresh_all();
-
-                      let ram_used = sys.used_memory() as f32 / 1000000000.0;
-                      let total_ram = sys.total_memory() as f32 / 1000000000.0;
-
-                      twitch.send_chat_message(format!(
-                        "Current Ram: {:.1}/{:.1} Gb ({:.0}%)",
-                        ram_used,
-                        total_ram,
-                        (ram_used / total_ram * 100.0).round()
-                      ));
-                    }
-                    ChatCommands::Github => {
-                      twitch.send_chat_message(format!(
-                        "Owl's github can be found at: https://github.com/lilith645",
-                      ));
-                    }
-                    ChatCommands::Lurk | ChatCommands::Loork | ChatCommands::luwurk => {
-                      twitch.send_chat_message(format!(
-                        "Thanks for coming by, appreciate the lurk {}!",
-                        username
-                      ));
-                    }
-                    ChatCommands::DotFiles => {
-                      twitch.send_chat_message(format!(
-                        "You can Owl's linux dot files here: https://github.com/lilith645/dotfiles"
-                      ));
-                    }
-                    ChatCommands::Editor => {
-                      twitch.send_chat_message(format!(
-                      "I switch between Helix , Neovim and Zed currently, there is a redeem to make Owl use a new editor!"
-                    ));
-                    }
-                    ChatCommands::Distro => {
-                      twitch.send_chat_message(format!(
-                        "The distro Owl uses is {} on kernel {}",
-                        System::long_os_version().unwrap_or("".to_string()),
-                        System::kernel_version().unwrap_or("".to_string())
-                      ));
-                    }
-                    ChatCommands::NeoFetch => {
-                      Command::new("neofetch")
-                        .arg("--disable")
-                        .args(["memory", "Theme", "icons", "WM", "Terminal", "shell"])
-                        .arg("--color_blocks")
-                        .arg("off")
-                        .arg("--ascii_distro")
-                        .arg(" Manjaro_small")
-                        .arg("--gap")
-                        .arg("0")
-                        .status()
-                        .unwrap();
-                      //neofetch --disable memory Theme icons WM Terminal shell
-                    }
-                    ChatCommands::EventSubLib => {
-                      twitch.send_chat_message(format!("Owl is working on a Rust library that allows you to talk to the twitch API: https://github.com/lilith645/TwitchEventSub-rs"));
-                    }
-                    ChatCommands::Fimsh => {
-                      twitch.send_chat_message("🐠".to_owned());
-                    }
-
-                    ChatCommands::Break => {
-                      twitch.send_chat_message(
-                        "Please break my chat bot, I'll thank you for it!".to_owned(),
-                      );
-                    }
-                    ChatCommands::Throbber => {
-                      twitch.send_chat_message(
-                        "Time for them blue pills owlkal1LHand owlkal1RHand".to_owned(),
-                      );
-                    }
-                    ChatCommands::VioletCrumble => {
-                      twitch.send_chat_message("owlkal1OC");
-                    }
-                    ChatCommands::SO | ChatCommands::ShoutOut => {
-                      if parameters.len() > 0 {
-                        twitch.send_chat_message(format!(
-                          "{} is an awesome streamer, follow them at http://twitch.tv/{}",
-                          parameters[0], parameters[0],
-                        ));
-                      }
-                    }
-                    ChatCommands::QOD | ChatCommands::QuestionOfTheDay => {
-                      twitch.send_chat_message("What is your most fond programming moment?");
-                      //twitch.send_chat_message("As a veiwer, do you know what you are wanting, when you click on a twitch channel?");
-                      // twitch.send_chat_message("What kind of programming challange or language do you think would be fun to see a streamer try?");
-                      //twitch.send_chat_message("What is the biggest hurdle in your way of doing what you want to do in life? Do you know the steps on how to overcome this hurdle?");
-                    }
-                    ChatCommands::Theme => {
-                      twitch.send_chat_message(
-                        "Owl uses the Dracula theme! (https://draculatheme.com/)",
-                      );
-                    }
-                    ChatCommands::Bones => {
-                      twitch.send_chat_message("IF YOURE NOT HAVING A GOOD TIME CRACK YOUR BONES ITS GOOD FOR YOU AND BONES ARE NOT REAL ANYWAY");
-                    }
-                    ChatCommands::Train => {
-                      twitch.send_chat_message("choo chooooo");
-                    }
+                // First time chatter!
+                let lower_message = message.to_ascii_lowercase();
+                if !all_messages.contains_key(&username)
+                  && username.to_lowercase() != STREAM_ACCOUNT
+                {
+                  if (lower_message.contains("view") || lower_message.contains("onlyfans"))
+                    && (lower_message.contains("http")
+                      || lower_message.contains(".ly")
+                      || lower_message.contains(".com")
+                      || lower_message.contains(".to"))
+                  {
+                    // timeout viewier because its probably a bot
+                    twitch.delete_message(message_id);
+                    //twitch.timeout_user(user_id, 5, "You are probably a bot, get rekt.");
+                    continue;
                   }
                 }
 
-                (None, Some(close), _) => {
-                  twitch
-                    .send_chat_message(format!("Did you mean to type the !{:?} command", close));
+                if username.to_lowercase() == STREAM_ACCOUNT {
+                  println!("{}", message);
+                } else {
+                  println!("{}: {}", username, message);
+                }
+                // comment
+                all_messages
+                  .entry(username.clone())
+                  .and_modify(|msg: &mut Vec<String>| msg.push(message.clone()))
+                  .or_insert(vec![message.clone()]);
+
+                let possible_quote = message.to_ascii_lowercase();
+                if (possible_quote.contains("don't quote")
+                  || possible_quote.contains("dont quote")
+                  || possible_quote.contains("do not quote"))
+                  && username.to_lowercase() != STREAM_ACCOUNT
+                {
+                  if let Some(msgs) = all_messages.get(&username) {
+                    let quote = if msgs.len() > 1 {
+                      msgs[msgs.len() - 2].clone()
+                    } else {
+                      msgs[0].clone()
+                    };
+
+                    let mut new_quote = format!("{}", quote); //~ {}", quote, username.clone());
+                    if new_quote[..6] != "!quote".to_owned() {
+                      new_quote = format!("\"{}\"", new_quote);
+                    }
+                    new_quote = format!("{} ~ {}", new_quote, username.to_owned());
+
+                    let mut file = fs::File::options()
+                      .append(true)
+                      .create(true)
+                      .open(QUOTES)
+                      .unwrap();
+                    file
+                      .write_all(format!("{}\n", new_quote).as_bytes())
+                      .unwrap();
+                  }
                 }
 
-                _ => {}
+                let message = message.to_ascii_lowercase();
+
+                if message.as_bytes()[0] as char == '!' {
+                  match ChatCommands::is_command(&String::from_utf8_lossy(&message.as_bytes()[1..]))
+                  {
+                    (Some(command), None, parameters) => {
+                      match command {
+                        ChatCommands::Hello => {
+                          twitch.send_chat_message(format!("Welcome to the stream {}! owlkal1LHand owlkal1Leye owlkal1Yap owlkal1Reye owlkal1RHand", username));
+                        }
+                        ChatCommands::Meat => {
+                          twitch.send_chat_message(format!(
+                        "Find out what happened to your meat today! https://youtu.be/7tScAyNaRdQ"
+                      ));
+                        }
+                        ChatCommands::Processing => {
+                          twitch.send_chat_message(format!(
+                          "Neat little programming program for protoyping, check it out: https://processing.org/"
+                     ));
+                        }
+                        // Second discord that looks normal is actually some
+                        // kind of special characters (Cyrillic)
+                        ChatCommands::Discord => {
+                          twitch.send_chat_message(format!(
+                            "Join Owl's discord at: https://discord.gg/8pdfBzGbgB"
+                          ));
+                        }
+                        ChatCommands::Optical => {
+                          twitch.send_chat_message(format!(
+                      "Optical illusion here: https://media.discordapp.net/attachments/691453928709292032/1241676080226762814/opticalIllusion.png?ex=66559c76&is=66544af6&hm=7c46b66eba9defe28cd42ab7a139af97b9c9646fc7ce0634cea49641cada8262&=&format=webp&quality=lossless&width=907&height=510"
+                    ));
+                        }
+                        ChatCommands::Throne => {
+                          twitch.send_chat_message(format!(
+                            "Throne wishlist: https://throne.com/owlkaline"
+                          ));
+                        }
+                        ChatCommands::Owlyfans => {
+                          twitch.send_chat_message(format!(
+                        "To Support the Owl more, Support on OwlyFans: https://ko-fi.com/owlkaline"
+                      ));
+                        }
+                        ChatCommands::HowToQuote => {
+                          twitch.send_chat_message(
+                            "Type \"don\'t quote\" to quote your previous message!".to_string(),
+                          );
+                        }
+                        ChatCommands::Quote => {
+                          if let Ok(quotes) = fs::read_to_string(QUOTES) {
+                            let lines = quotes.lines().collect::<Vec<_>>();
+
+                            let line_count = lines.len() as f32;
+                            let rng = rng.gen::<f32>();
+
+                            let idx = (rng * line_count).floor() as usize;
+
+                            let quote = lines[idx];
+                            twitch.send_chat_message(quote.to_string());
+                          } else {
+                            twitch.send_chat_message(format!("The quotes were cleared! Make your own quote by sending the quote in chat, then have your next message contain \"don\'t quote me\" to create a quote."));
+                          }
+                        }
+                        ChatCommands::Commands => {
+                          let mut all_commands = "The Following commands exist:\n".to_string();
+                          for variant in ChatCommands::all_variants() {
+                            all_commands = format!("{}!{:?}\n", all_commands, variant);
+                          }
+                          twitch.send_chat_message(all_commands);
+                        }
+                        ChatCommands::Ram => {
+                          sys.refresh_all();
+
+                          let ram_used = sys.used_memory() as f32 / 1000000000.0;
+                          let total_ram = sys.total_memory() as f32 / 1000000000.0;
+
+                          twitch.send_chat_message(format!(
+                            "Current Ram: {:.1}/{:.1} Gb ({:.0}%)",
+                            ram_used,
+                            total_ram,
+                            (ram_used / total_ram * 100.0).round()
+                          ));
+                        }
+                        ChatCommands::Github => {
+                          twitch.send_chat_message(format!(
+                            "Owl's github can be found at: https://github.com/lilith645",
+                          ));
+                        }
+                        ChatCommands::Lurk | ChatCommands::Loork | ChatCommands::luwurk => {
+                          twitch.send_chat_message(format!(
+                            "Thanks for coming by, appreciate the lurk {}!",
+                            username
+                          ));
+                        }
+                        ChatCommands::DotFiles => {
+                          twitch.send_chat_message(format!(
+                        "You can Owl's linux dot files here: https://github.com/lilith645/dotfiles"
+                      ));
+                        }
+                        ChatCommands::Editor => {
+                          twitch.send_chat_message(format!(
+                      "I switch between Helix , Neovim and Zed currently, there is a redeem to make Owl use a new editor!"
+                    ));
+                        }
+                        ChatCommands::Distro => {
+                          twitch.send_chat_message(format!(
+                            "The distro Owl uses is {} on kernel {}",
+                            System::long_os_version().unwrap_or("".to_string()),
+                            System::kernel_version().unwrap_or("".to_string())
+                          ));
+                        }
+                        ChatCommands::NeoFetch => {
+                          #[cfg(target_os = "linux")]
+                          Command::new("neofetch")
+                            .arg("--disable")
+                            .args(["memory", "Theme", "icons", "WM", "Terminal", "shell"])
+                            .arg("--color_blocks")
+                            .arg("off")
+                            .arg("--ascii_distro")
+                            .arg(" Manjaro_small")
+                            .arg("--gap")
+                            .arg("0")
+                            .status()
+                            .unwrap();
+                          #[cfg(target_os = "windows")]
+                          twitch.send_chat_message(format!(
+                            "The command you are looking for is !distro"
+                          ));
+                        }
+                        ChatCommands::EventSubLib => {
+                          twitch.send_chat_message(format!("Owl is working on a Rust library that allows you to talk to the twitch API: https://github.com/lilith645/TwitchEventSub-rs"));
+                        }
+                        ChatCommands::Fimsh => {
+                          let e = twitch.send_chat_message("🐠".to_owned());
+                          error!("send message: {:?}", e);
+                        }
+
+                        ChatCommands::Break => {
+                          twitch.send_chat_message(
+                            "Please break my chat bot, I'll thank you for it!".to_owned(),
+                          );
+                        }
+                        ChatCommands::Throbber => {
+                          twitch.send_chat_message(
+                            "Time for them blue pills owlkal1LHand owlkal1RHand".to_owned(),
+                          );
+                        }
+                        ChatCommands::VioletCrumble => {
+                          twitch.send_chat_message("owlkal1OC");
+                        }
+                        ChatCommands::SO | ChatCommands::ShoutOut => {
+                          if parameters.len() > 0 {
+                            twitch.send_chat_message(format!(
+                              "{} is an awesome streamer, follow them at http://twitch.tv/{}",
+                              parameters[0], parameters[0],
+                            ));
+                          }
+                        }
+                        ChatCommands::QOD | ChatCommands::QuestionOfTheDay => {
+                          twitch
+                            .send_chat_message("What is the best coop video game you have played?");
+                          //twitch.send_chat_message("Who are you most excited to pull in ZZZ?");
+                          //twitch.send_chat_message("What is your most fond programming moment?");
+                          //twitch.send_chat_message("What was the last game you played that you were surpised that you liked?");
+                          //twitch.send_chat_message("As a veiwer, do you know what you are wanting, when you click on a twitch channel?");
+                          // twitch.send_chat_message("What kind of programming challange or language do you think would be fun to see a streamer try?");
+                          //twitch.send_chat_message("What is the biggest hurdle in your way of doing what you want to do in life? Do you know the steps on how to overcome this hurdle?");
+                        }
+                        ChatCommands::Theme => {
+                          twitch.send_chat_message(
+                            "Owl uses the Dracula theme! (https://draculatheme.com/)",
+                          );
+                        }
+                        ChatCommands::Bones => {
+                          twitch.send_chat_message("IF YOURE NOT HAVING A GOOD TIME CRACK YOUR BONES ITS GOOD FOR YOU AND BONES ARE NOT REAL ANYWAY");
+                        }
+                        ChatCommands::Train => {
+                          twitch.send_chat_message("choo chooooo");
+                        }
+                      }
+                    }
+
+                    (None, Some(close), _) => {
+                      twitch.send_chat_message(format!(
+                        "Did you mean to type the !{:?} command",
+                        close
+                      ));
+                    }
+
+                    e => {
+                      //println!("{:#?}", e);
+                    }
+                  }
+                }
               }
+              // rest of events
+              _ => {}
             }
-          }
-          MessageType::Event(e) => {
-            println!("{:#?}", e);
           }
           // MessageType::CustomRedeem((username, input, reward)) => {
           //   println!(
