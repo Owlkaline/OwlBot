@@ -1,5 +1,5 @@
 pub const QUOTES: &str = "quotes";
-pub const STREAM_ACCOUNT: &str = "owlkaline__";
+pub const STREAM_ACCOUNT: &str = "owlkalinevt";
 pub const STREAM_TWITCH_ID: &str = "122297321";
 
 pub const CONNECTION: &'static str = "ws://irc-ws.chat.twitch.tv:80";

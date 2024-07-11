@@ -21,8 +21,8 @@ use modules::consts::*;
 use obws::Client;
 
 use twitch_eventsub::{
-  error, Event, EventSubError, MessageType, Subscription, TokenAccess, TwitchEventSubApi,
-  TwitchHttpRequest, TwitchKeys,
+  error, Event, EventSubError, ResponseType, Subscription, TokenAccess, TwitchEventSubApi,
+  TwitchHttpRequest, TwitchKeys, *,
 };
 
 #[derive(AllVariants, Debug, Clone, PartialEq)]
@@ -46,7 +46,7 @@ enum ChatCommands {
   NeoFetch,
   Editor,
   Distro,
-  EventSubLib,
+  Projects,
   Fimsh,
   Break,
   Throbber,
@@ -58,6 +58,7 @@ enum ChatCommands {
   Theme,
   Bones,
   Train,
+  Bread,
 }
 
 impl ChatCommands {
@@ -169,13 +170,13 @@ fn main() {
       Subscription::ChannelFollow,
       Subscription::ChannelRaid,
       //Subscription::ChannelUpdate,
-      Subscription::ChannelSubscribe,
+      Subscription::ChannelNewSubscription,
       //Subscription::ChannelSubscriptionEnd,
-      Subscription::ChannelSubscriptionGift,
-      Subscription::ChannelSubscriptionMessage,
+      Subscription::ChannelGiftSubscription,
+      Subscription::ChannelResubscription,
       Subscription::ChannelCheer,
-      //Subscription::ChannelPointsCustomRewardRedeem,
-      //Subscription::ChannelPointsAutoRewardRedeem,
+      Subscription::ChannelPointsCustomRewardRedeem,
+      Subscription::ChannelPointsAutoRewardRedeem,
       //Subscription::ChannelPollBegin,
       //Subscription::ChannelPollProgress,
       //Subscription::ChannelPollEnd,
@@ -193,7 +194,7 @@ fn main() {
       //Subscription::ChannelShoutoutReceive,
       Subscription::ChatMessage,
       //Subscription::BanTimeoutUser,
-      //Subscription::DeleteMessage,
+      Subscription::DeleteMessage,
       Subscription::AdBreakBegin,
     ])
     //.add_subscription(Subscription::ChatMessage)
@@ -239,14 +240,16 @@ fn main() {
       for message in twitch.receive_messages(Duration::from_millis(duration)) {
         recent_loops = 0;
         match message {
-          MessageType::Event(event) => {
+          ResponseType::Event(event) => {
             match event {
               Event::Raid(raid_data) => {
                 println!(
                   "Raid from {} with {} viewers!",
                   raid_data.from_broadcaster.name, raid_data.viewers
                 );
-                twitch.send_chat_message(format!("!so {}", raid_data.from_broadcaster.name));
+                if raid_data.viewers >= 5 {
+                  twitch.send_chat_message(format!("!so {}", raid_data.from_broadcaster.name));
+                }
               }
               Event::AdBreakBegin(break_data) => {
                 twitch.send_chat_message(format!(
@@ -254,35 +257,70 @@ fn main() {
                   break_data.duration_seconds / 60
                 ));
               }
-              Event::PointsCustomRewardRedeem(reward) => {
-                println!("{} redeemed {}", reward.user.name, reward.reward.title);
-                if !reward.user_input.is_empty() {
-                  println!("    with input: {}", reward.user_input);
+              Event::ChannelPointsAutoRewardRedeem(auto_redeem) => {
+                println!("Auto point redeem: {:?}", auto_redeem);
+                let message = auto_redeem.reward.message.text;
+                match auto_redeem.reward.kind {
+                  AutoRewardType::MessageEffect => {
+                    for i in 0..3 {
+                      println!("INSERT MESSAGE EFFECT: {}", message);
+                    }
+                  }
+                  AutoRewardType::GigantifyAnEmote => {
+                    for i in 0..3 {
+                      println!("INSERT GIGANTIFY EMOTE: {}", message);
+                    }
+                  }
+                  AutoRewardType::Celebration => {
+                    println!(
+                      "Thank you for the using the On-Screen Celebration {}!",
+                      auto_redeem.user.name
+                    );
+                  }
+                  _ => {}
                 }
               }
-              Event::Subscribe(subscription) => {
+              Event::PointsCustomRewardRedeem(reward) => {
+                let title = reward.reward.title;
+                let user = reward.user.name;
+                let input = reward.user_input;
+
+                if title.contains("water") {
+                  println!("{} watered the Owl!", user);
+                }
+                if title.contains("EU") {
+                  println!("{} has sent Owl to the EU!", user);
+                }
+                if title.contains("editor") {
+                  println!("{} has requested Owl uses {}", user, input);
+                }
+                if title.contains("game") {
+                  println!("{} has request Owl to live a rust free life.", user);
+                }
+              }
+              Event::NewSubscription(subscription) => {
                 if subscription.is_gift {
                   println!(
-                    "{} recieved a tier {} subscription!",
+                    "{} received their first tier {} subscription!",
                     subscription.user.name, subscription.tier
                   );
                 } else {
                   println!(
-                    "{} subscribed with a tier {} sub!",
+                    "{} subscribed for the first time with a tier {} sub!",
                     subscription.user.name, subscription.tier
                   );
                 }
               }
-              Event::SubscriptionGift(gifty) => {
+              Event::GiftSubscription(gifty) => {
                 println!(
                   "{} Generously Gifted {} tier {} subscriptions!",
                   gifty.user.name, gifty.total, gifty.tier
                 );
               }
-              Event::SubscriptionMessage(subscription) => {
+              Event::Resubscription(subscription) => {
                 println!(
-                  "{} subscribed with a tier {} sub!",
-                  subscription.user.name, subscription.tier
+                  "{} has resubscribed for {} months total!",
+                  subscription.user.name, subscription.cumulative_months
                 );
                 println!("    {}", subscription.message.text);
               }
@@ -301,19 +339,41 @@ fn main() {
                 let message = message_data.message.text;
                 let message_id = message_data.message_id;
 
+                match message_data.message_type {
+                  MessageType::PowerUpsMessageEffect | MessageType::PowerUpsGigantifiedEmote => {
+                    let _ = twitch.send_chat_message_with_reply(
+                      format!("Thank you for supporting the channel {}!", username),
+                      Some(message_id.to_owned()),
+                    );
+                  }
+                  _ => {}
+                }
+
                 // First time chatter!
                 let lower_message = message.to_ascii_lowercase();
                 if !all_messages.contains_key(&username)
                   && username.to_lowercase() != STREAM_ACCOUNT
                 {
-                  if (lower_message.contains("view") || lower_message.contains("onlyfans"))
-                    && (lower_message.contains("http")
-                      || lower_message.contains(".ly")
-                      || lower_message.contains(".com")
-                      || lower_message.contains(".to"))
+                  let mut sus_words = [
+                    "view",
+                    "streamrise",
+                    "onlyfans",
+                    "http",
+                    ".ly",
+                    ".com",
+                    ".to",
+                    "promotion",
+                  ];
+
+                  if sus_words
+                    .iter()
+                    .filter(|sussy| lower_message.contains(*sussy))
+                    .count()
+                    > 1
                   {
                     // timeout viewier because its probably a bot
-                    twitch.delete_message(message_id);
+                    println!("{:?}", twitch.delete_message(message_id));
+                    println!("Message delted");
                     //twitch.timeout_user(user_id, 5, "You are probably a bot, get rekt.");
                     continue;
                   }
@@ -488,12 +548,11 @@ fn main() {
                             "The command you are looking for is !distro"
                           ));
                         }
-                        ChatCommands::EventSubLib => {
+                        ChatCommands::Projects => {
                           twitch.send_chat_message(format!("Owl is working on a Rust library that allows you to talk to the twitch API: https://github.com/lilith645/TwitchEventSub-rs"));
                         }
                         ChatCommands::Fimsh => {
-                          let e = twitch.send_chat_message("🐠".to_owned());
-                          error!("send message: {:?}", e);
+                          twitch.send_chat_message("owlkal1Fimsh".to_owned());
                         }
 
                         ChatCommands::Break => {
@@ -518,8 +577,9 @@ fn main() {
                           }
                         }
                         ChatCommands::QOD | ChatCommands::QuestionOfTheDay => {
-                          twitch
-                            .send_chat_message("What is the best coop video game you have played?");
+                          twitch.send_chat_message("Would you be interested in watching my vods if I was to put them onto a Vods channel on youtube?");
+                          //twitch
+                          //  .send_chat_message("What is the best coop video game you have played?");
                           //twitch.send_chat_message("Who are you most excited to pull in ZZZ?");
                           //twitch.send_chat_message("What is your most fond programming moment?");
                           //twitch.send_chat_message("What was the last game you played that you were surpised that you liked?");
@@ -537,6 +597,9 @@ fn main() {
                         }
                         ChatCommands::Train => {
                           twitch.send_chat_message("choo chooooo");
+                        }
+                        ChatCommands::Bread => {
+                          twitch.send_chat_message("🍞 I knead your loaf.");
                         }
                       }
                     }
@@ -567,11 +630,11 @@ fn main() {
           // MessageType::AdBreakNotification(duration) => {
           //   twitch.send_chat_message(format!("A {}min Ad has attacked! sorry for any inconviences. I try my best to not do anything interesting and hope you at least get hilarious ads!", duration / 60));
           // }
-          MessageType::Error(event_sub_error) => {
+          ResponseType::Error(event_sub_error) => {
             println!("{:?}", event_sub_error);
             error!("{:?}", event_sub_error);
           }
-          MessageType::RawResponse(raw_data) => {
+          ResponseType::RawResponse(raw_data) => {
             let response = format!("RAW response: {}", raw_data);
             println!("{}", response);
           }
