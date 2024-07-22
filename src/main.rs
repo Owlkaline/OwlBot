@@ -31,7 +31,7 @@ enum ChatCommands {
   Meat,
   Processing,
   Discord,
-  Optical,
+  //  Optical,
   Throne,
   Owlyfans,
   HowToQuote,
@@ -40,6 +40,7 @@ enum ChatCommands {
   Ram,
   Github,
   Lurk,
+  Lurking,
   Loork,
   luwurk,
   DotFiles,
@@ -216,8 +217,11 @@ fn main() {
     //     transport: Transport::new(""),
     //   })
     //))
-    .build()
-    .unwrap();
+    .build();
+
+  // println!("{:?}", twitch);
+
+  let mut twitch = twitch.unwrap();
 
   {
     let mut rng = thread_rng();
@@ -237,7 +241,7 @@ fn main() {
         recent_loops += 1;
       }
 
-      for message in twitch.receive_messages(Duration::from_millis(duration)) {
+      for message in twitch.receive_all_messages(Some(Duration::from_millis(duration))) {
         recent_loops = 0;
         match message {
           ResponseType::Event(event) => {
@@ -252,14 +256,13 @@ fn main() {
                 }
               }
               Event::AdBreakBegin(break_data) => {
-                twitch.send_chat_message(format!(
-                  "A {}min Ad has attacked! I try my best to not do anything interesting.",
-                  break_data.duration_seconds / 60
-                ));
+                //twitch.send_chat_message(format!(
+                //  "A {}min Ad has attacked! I try my best to not do anything interesting.",
+                //  break_data.duration_seconds / 60
+                //));
               }
               Event::ChannelPointsAutoRewardRedeem(auto_redeem) => {
-                println!("Auto point redeem: {:?}", auto_redeem);
-                let message = auto_redeem.reward.message.text;
+                let message = auto_redeem.message.text;
                 match auto_redeem.reward.kind {
                   AutoRewardType::MessageEffect => {
                     for i in 0..3 {
@@ -314,7 +317,9 @@ fn main() {
               Event::GiftSubscription(gifty) => {
                 println!(
                   "{} Generously Gifted {} tier {} subscriptions!",
-                  gifty.user.name, gifty.total, gifty.tier
+                  gifty.user.name.unwrap_or("Anonymous".to_owned()),
+                  gifty.total,
+                  gifty.tier
                 );
               }
               Event::Resubscription(subscription) => {
@@ -363,6 +368,8 @@ fn main() {
                     ".com",
                     ".to",
                     "promotion",
+                    "free",
+                    "activate",
                   ];
 
                   if sus_words
@@ -371,10 +378,11 @@ fn main() {
                     .count()
                     > 1
                   {
-                    // timeout viewier because its probably a bot
-                    println!("{:?}", twitch.delete_message(message_id));
-                    println!("Message delted");
-                    //twitch.timeout_user(user_id, 5, "You are probably a bot, get rekt.");
+                    if let Ok(_) = twitch.delete_message(message_id) {
+                      let _ = twitch
+                        .send_chat_message("Another bot was vanquished, give OwlBot many pats.");
+                    }
+
                     continue;
                   }
                 }
@@ -447,11 +455,11 @@ fn main() {
                             "Join Owl's discord at: https://discord.gg/8pdfBzGbgB"
                           ));
                         }
-                        ChatCommands::Optical => {
-                          twitch.send_chat_message(format!(
-                      "Optical illusion here: https://media.discordapp.net/attachments/691453928709292032/1241676080226762814/opticalIllusion.png?ex=66559c76&is=66544af6&hm=7c46b66eba9defe28cd42ab7a139af97b9c9646fc7ce0634cea49641cada8262&=&format=webp&quality=lossless&width=907&height=510"
-                    ));
-                        }
+                        //ChatCommands::Optical => {
+                        //  twitch.send_chat_message(format!(
+                        //"Optical illusion here: https://media.discordapp.net/attachments/691453928709292032/1241676080226762814/opticalIllusion.png?ex=66559c76&is=66544af6&hm=7c46b66eba9defe28cd42ab7a139af97b9c9646fc7ce0634cea49641cada8262&=&format=webp&quality=lossless&width=907&height=510"
+                        //));
+                        //  }
                         ChatCommands::Throne => {
                           twitch.send_chat_message(format!(
                             "Throne wishlist: https://throne.com/owlkaline"
@@ -504,10 +512,13 @@ fn main() {
                         }
                         ChatCommands::Github => {
                           twitch.send_chat_message(format!(
-                            "Owl's github can be found at: https://github.com/lilith645",
+                            "Owl's github can be found at: https://github.com/Owlkaline",
                           ));
                         }
-                        ChatCommands::Lurk | ChatCommands::Loork | ChatCommands::luwurk => {
+                        ChatCommands::Lurk
+                        | ChatCommands::Loork
+                        | ChatCommands::luwurk
+                        | ChatCommands::Lurking => {
                           twitch.send_chat_message(format!(
                             "Thanks for coming by, appreciate the lurk {}!",
                             username
@@ -515,7 +526,7 @@ fn main() {
                         }
                         ChatCommands::DotFiles => {
                           twitch.send_chat_message(format!(
-                        "You can Owl's linux dot files here: https://github.com/lilith645/dotfiles"
+                        "You can Owl's linux dot files here: https://github.com/Owlkaline/dotfiles"
                       ));
                         }
                         ChatCommands::Editor => {
@@ -549,7 +560,7 @@ fn main() {
                           ));
                         }
                         ChatCommands::Projects => {
-                          twitch.send_chat_message(format!("Owl is working on a Rust library that allows you to talk to the twitch API: https://github.com/lilith645/TwitchEventSub-rs"));
+                          twitch.send_chat_message(format!("Owl is working on a Rust library that allows you to talk to the twitch API: https://github.com/owlkaline/TwitchEventSub-rs"));
                         }
                         ChatCommands::Fimsh => {
                           twitch.send_chat_message("owlkal1Fimsh".to_owned());
@@ -577,7 +588,17 @@ fn main() {
                           }
                         }
                         ChatCommands::QOD | ChatCommands::QuestionOfTheDay => {
-                          twitch.send_chat_message("Would you be interested in watching my vods if I was to put them onto a Vods channel on youtube?");
+                          if let Err(e) = twitch.send_chat_message(
+                            //"What's your favourite rpg game and why?", //"What is the most vivid and coolest dream you have had?",
+                            // "What do you think a cool fimsh redeem would be?",
+                            "What is your favourite flower?",
+                          ) {
+                            println!("Error sending message: {:?}", e);
+                          }
+                          //twitch.send_chat_message(
+                          //  "What is the game mechanic you have most enjoyed in a 2D game?",
+                          //);
+                          //twitch.send_chat_message("Would you be interested in watching my vods if I was to put them onto a Vods channel on youtube?");
                           //twitch
                           //  .send_chat_message("What is the best coop video game you have played?");
                           //twitch.send_chat_message("Who are you most excited to pull in ZZZ?");
