@@ -7,6 +7,7 @@ use std::fs;
 use std::io::{stdin, Read, Write};
 use std::process::Command;
 use std::process::Stdio;
+use std::time::Instant;
 use std::{thread, time::Duration};
 use websocket::url::form_urlencoded::Target;
 
@@ -18,7 +19,6 @@ mod modules;
 
 use modules::consts::*;
 //use modules::TwitchChat;
-use obws::Client;
 
 use twitch_eventsub::{
   error, Event, EventSubError, ResponseType, Subscription, TokenAccess, TwitchEventSubApi,
@@ -223,6 +223,9 @@ fn main() {
 
   let mut twitch = twitch.unwrap();
 
+  let mut bots_recently_vanquished = 0;
+  let mut time_since_last_vanquish = Instant::now();
+
   {
     let mut rng = thread_rng();
 
@@ -239,6 +242,16 @@ fn main() {
         duration = 1;
       } else {
         recent_loops += 1;
+      }
+
+      if bots_recently_vanquished > 0 {
+        if time_since_last_vanquish.elapsed().as_secs_f32() > 30.0 {
+          let _ = twitch.send_chat_message(format!(
+            "{} bot/s were vanquished, give OwlBot many pats.",
+            bots_recently_vanquished
+          ));
+          bots_recently_vanquished = 0;
+        }
       }
 
       for message in twitch.receive_all_messages(Some(Duration::from_millis(duration))) {
@@ -359,28 +372,38 @@ fn main() {
                 if !all_messages.contains_key(&username)
                   && username.to_lowercase() != STREAM_ACCOUNT
                 {
-                  let mut sus_words = [
+                  let is_link = lower_message
+                    .split('.')
+                    .skip(1)
+                    .any(|s| s.len() > 1 && s.chars().take(2).all(char::is_alphabetic));
+
+                  let sus_words = [
+                    "cheap",
                     "view",
                     "streamrise",
                     "onlyfans",
                     "http",
+                    "promotion",
+                    "activate",
                     ".ly",
                     ".com",
                     ".to",
-                    "promotion",
                     "free",
-                    "activate",
+                    ".store",
+                    ".xyz",
+                    ".org",
                   ];
 
-                  if sus_words
-                    .iter()
-                    .filter(|sussy| lower_message.contains(*sussy))
-                    .count()
-                    > 1
+                  if is_link
+                    || sus_words
+                      .iter()
+                      .filter(|sussy| lower_message.contains(*sussy))
+                      .count()
+                      > 1
                   {
                     if let Ok(_) = twitch.delete_message(message_id) {
-                      let _ = twitch
-                        .send_chat_message("Another bot was vanquished, give OwlBot many pats.");
+                      bots_recently_vanquished += 1;
+                      time_since_last_vanquish = Instant::now();
                     }
 
                     continue;
@@ -591,7 +614,9 @@ fn main() {
                           if let Err(e) = twitch.send_chat_message(
                             //"What's your favourite rpg game and why?", //"What is the most vivid and coolest dream you have had?",
                             // "What do you think a cool fimsh redeem would be?",
-                            "What is your favourite flower?",
+                            //"What is your favourite flower?",
+                         //   "What is your greatest goal for the next year?",
+                         "What do you do when one of your friends is sad, to help thm feel a little bit more comfy or less sad?"
                           ) {
                             println!("Error sending message: {:?}", e);
                           }
