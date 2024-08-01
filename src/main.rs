@@ -1,5 +1,5 @@
 use rand::thread_rng;
-use rand::Rng;
+use rand::{distributions::Uniform, Rng};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -7,17 +7,24 @@ use std::fs;
 use std::io::{stdin, Read, Write};
 use std::process::Command;
 use std::process::Stdio;
+use std::str::SplitWhitespace;
 use std::time::Instant;
 use std::{thread, time::Duration};
+use websocket::native_tls::MidHandshakeTlsStream;
 use websocket::url::form_urlencoded::Target;
+
+use base64::prelude::*;
+use crossterm::csi;
 
 use enum_all_variants::AllVariants;
 
 use sysinfo::{Components, Disks, Networks, System};
 
+use notcurses::*;
+
 mod modules;
 
-use modules::consts::*;
+use modules::{consts::*, emotes};
 //use modules::TwitchChat;
 
 use twitch_eventsub::{
@@ -156,7 +163,75 @@ impl ChatCommands {
   }
 }
 
-fn main() {
+macro_rules! gp {
+  ($c:expr) => {
+    concat!("\x1B_G", $c, "\x1b\\")
+  };
+}
+
+fn main() -> NotcursesResult<()> {
+  //let mut nc = Notcurses::new_cli().unwrap();
+  //let mut cli = nc.cli_plane().unwrap();
+
+  // let mut rng = rand::thread_rng();
+  // let range = Uniform::from(50..=200);
+  // let mut rgba_buf = Vec::<u8>::with_capacity(200 * 4);
+  // for _ in 0..=200 {
+  //   rgba_buf.push(rng.sample(&range));
+  //   rgba_buf.push(rng.sample(&range));
+  //   rgba_buf.push(rng.sample(&range));
+  //   rgba_buf.push(255);
+  // }
+
+  // let mut visual = Visual::from_rgba(rgba_buf.as_slice(), (5, 8)).unwrap();
+  // visual.set_blitter_pixel();
+
+  // Blit the visual to a new plane:
+  // let mut new_plane = visual.blit(&mut nc)?;
+  // new_plane.render()?;
+  // thread::sleep(Duration::from_millis(1000));
+
+  //thread::sleep(Duration::from_millis(1000));
+  //cli.set_fg(0xDE935F);
+  // Blit the visual to a pre-existing plane:
+  //print!("Before plane");
+  // let pos = putstr![cli, "BEFORE PLANE"].unwrap();
+  //  cli.putstr("BEFORE PLANE");
+  //let mut existing_plane = Plane::builder().position(cli.cursor()).build(&mut nc)?;
+  //visual.blit_plane(&mut nc, &mut existing_plane)?;
+
+  // Blit the visual into a new child plane:
+  //let mut parent_plane = Plane::builder().position((pos, )).build(&mut nc)?;
+  // let mut child = visual.blit_child(&mut nc, &mut cli)?;
+  // child.move_to(cli.cursor());
+  //parent_plane.render()?;
+  //child.render()?;
+  // cli.putstr_at(
+  //   (
+  //     visual.size().unwrap().w() / 2 + cli.cursor().x(),
+  //     cli.cursor().y(),
+  //   ),
+  //   "AFTER PLANE",
+  // );
+  // cli.putstrln("");
+
+  // cli.render();
+
+  //existing_plane.render()?;
+  //thread::sleep(Duration::from_millis(1000));
+
+  //let mut visual = Visual::from_rgba(rgba_buf.as_slice(), (10, 20)).unwrap();
+  //let mut new_plane = visual.blit(&mut nc)?;
+  //new_plane.render()?;
+
+  //putstr![cli, "Before plane"];
+  //let mut existing_plane = Plane::builder().position((5, 0)).build(&mut nc)?;
+  //visual.blit_plane(&mut nc, &mut existing_plane)?;
+  //existing_plane.render()?;
+  //print!("after plane");
+  ////sleep(Duration::from_millis(1000));
+
+  // putstrln![cli, "<- Hello this is new owlbot!", cli.cursor()].unwrap();
   let keys = TwitchKeys::from_secrets_env().unwrap();
   let redirect_url = "http://localhost:3000";
 
@@ -195,7 +270,8 @@ fn main() {
       //Subscription::ChannelShoutoutReceive,
       Subscription::ChatMessage,
       //Subscription::BanTimeoutUser,
-      Subscription::DeleteMessage,
+      Subscription::PermissionDeleteMessage,
+      Subscription::PermissionReadChatters,
       Subscription::AdBreakBegin,
     ])
     //.add_subscription(Subscription::ChatMessage)
@@ -225,6 +301,30 @@ fn main() {
 
   let mut bots_recently_vanquished = 0;
   let mut time_since_last_vanquish = Instant::now();
+
+  let mut emote_buffer = HashMap::new();
+
+  if let Ok(kitty_data) = fs::read_to_string("kitty_emotes") {
+    for line in kitty_data.lines() {
+      match line.split_whitespace().collect::<Vec<_>>().to_vec()[..] {
+        [idx, emote_id] => {
+          emote_buffer.insert(emote_id.to_string(), idx.parse::<u32>().unwrap());
+        }
+        _ => {}
+      }
+    }
+  }
+
+  //let emotes = twitch.get_channel_emotes(STREAM_TWITCH_ID).unwrap();
+
+  //let new_image_data = attohttpc::get(emotes.from_idx(3)).send().unwrap();
+
+  // println!("\x1b_Ga=p,i=1,q=1\x1b\\");
+  //print!(
+  //  "\x1b_Ga=T,f=100;{}\x1b\\",
+  //  BASE64_STANDARD.encode(new_image_data.bytes().unwrap())
+  //);
+  //println!(" stuff after emote;");
 
   {
     let mut rng = thread_rng();
@@ -410,11 +510,24 @@ fn main() {
                   }
                 }
 
-                if username.to_lowercase() == STREAM_ACCOUNT {
-                  println!("{}", message);
-                } else {
-                  println!("{}: {}", username, message);
+                if username.to_lowercase() != STREAM_ACCOUNT {
+                  print!("{}: ", username);
                 }
+
+                for fragments in message_data.message.fragments {
+                  match fragments.kind {
+                    FragmentType::Emote => {
+                      if let Some(emote) = fragments.emote {
+                        emotes::print_emote(&mut twitch, emote, &mut emote_buffer);
+                      }
+                    }
+                    _ => {
+                      print!("{}", fragments.text);
+                    }
+                  }
+                }
+                println!("");
+
                 // comment
                 all_messages
                   .entry(username.clone())
@@ -611,15 +724,39 @@ fn main() {
                           }
                         }
                         ChatCommands::QOD | ChatCommands::QuestionOfTheDay => {
-                          if let Err(e) = twitch.send_chat_message(
-                            //"What's your favourite rpg game and why?", //"What is the most vivid and coolest dream you have had?",
-                            // "What do you think a cool fimsh redeem would be?",
-                            //"What is your favourite flower?",
-                         //   "What is your greatest goal for the next year?",
-                         "What do you do when one of your friends is sad, to help thm feel a little bit more comfy or less sad?"
-                          ) {
-                            println!("Error sending message: {:?}", e);
+                          if let Ok(questions) = fs::read_to_string(QOD) {
+                            let msg = questions
+                              .lines()
+                              .find(|line| !line.starts_with("//"))
+                              .unwrap_or("Owl messed something up");
+                            let _ = twitch.send_chat_message(msg);
+                          } else {
+                            let _ = twitch.send_chat_message("Question of the day, what a meme!");
                           }
+
+                          //  for line in lines {
+                          //    if line[0] != "/" {
+                          //      let _ = twitch.send_chat_message(line);
+                          //      found_quote = true;
+                          //      break;
+                          //    }
+                          //  }
+                          //}
+                          //
+                          //if !found_quote {
+                          //  let _ = twitch.send_chat_message("");
+                          //}
+
+                          //if let Err(e) = twitch.send_chat_message(
+                          //  //"What's your favourite rpg game and why?", //"What is the most vivid and coolest dream you have had?",
+                          //  // "What do you think a cool fimsh redeem would be?",
+                          //  //"What is your favourite flower?",
+                          //  //   "What is your greatest goal for the next year?",
+                          //  //"What do you do when one of your friends is sad, to help thm feel a little bit more comfy or less sad?"
+                          //  "What tricks do you use to get take away less?",
+                          //) {
+                          //  println!("Error sending message: {:?}", e);
+                          //}
                           //twitch.send_chat_message(
                           //  "What is the game mechanic you have most enjoyed in a 2D game?",
                           //);

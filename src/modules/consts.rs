@@ -1,4 +1,5 @@
 pub const QUOTES: &str = "quotes";
+pub const QOD: &str = "qod";
 pub const STREAM_ACCOUNT: &str = "owlkalinevt";
 pub const STREAM_TWITCH_ID: &str = "122297321";
 
@@ -16,3 +17,5 @@ pub const USERNAME: &str = "NICK";
 pub const MESSAGE: &str = "PRIVMSG";
 pub const CAPABILITY_REQUIREMENTS: &str = "CAP REQ";
 pub const PING: &str = "PING";
+
+pub const EMOTE_BUFFER_FILE: &str = "kitty_data";
