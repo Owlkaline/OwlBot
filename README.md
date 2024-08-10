@@ -1,2 +1,2 @@
 # OwlBot
-My twitch chat bot made for my stream twitch.tv/Owlkalinevt , using the TwitchEventSub-rs Library
+My twitch chat bot made for my stream https://twitch.tv/owlkalinevt , using the TwitchEventSub-rs Library
