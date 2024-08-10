@@ -32,7 +32,7 @@ use twitch_eventsub::{
   TwitchHttpRequest, TwitchKeys, *,
 };
 
-#[derive(PartialEq)]
+#[derive(PartialEq, AllVariants)]
 enum RankVariety {
   Common,
   Uncommon,
@@ -99,6 +99,7 @@ enum ChatCommands {
   Train,
   Bread,
   Rank,
+  Ranks,
   OwlBeCringe,
 }
 
@@ -268,6 +269,7 @@ fn main() -> NotcursesResult<()> {
   let keys = TwitchKeys::from_secrets_env().unwrap();
   let redirect_url = "http://localhost:3000";
 
+  println!("Owlbot booting up!");
   let mut twitch = TwitchEventSubApi::builder(keys.clone())
     .set_redirect_url(redirect_url)
     .generate_new_token_if_insufficent_scope(true)
@@ -290,10 +292,10 @@ fn main() -> NotcursesResult<()> {
       //Subscription::ChannelPollBegin,
       //Subscription::ChannelPollProgress,
       //Subscription::ChannelPollEnd,
-      //Subscription::ChannelPredictionBegin,
-      //Subscription::ChannelPredictionProgress,
-      //Subscription::ChannelPredictionLock,
-      //Subscription::ChannelPredictionEnd,
+      Subscription::ChannelPredictionBegin,
+      Subscription::ChannelPredictionProgress,
+      Subscription::ChannelPredictionLock,
+      Subscription::ChannelPredictionEnd,
       //Subscription::ChannelGoalBegin,
       //Subscription::ChannelGoalProgress,
       //Subscription::ChannelGoalEnd,
@@ -332,6 +334,7 @@ fn main() -> NotcursesResult<()> {
   // println!("{:?}", twitch);
 
   let mut twitch = twitch.unwrap();
+  println!("Owlbot has been equipped!");
 
   let mut bots_recently_vanquished = 0;
   let mut time_since_last_vanquish = Instant::now();
@@ -426,6 +429,9 @@ fn main() -> NotcursesResult<()> {
       for message in twitch.receive_all_messages(Some(Duration::from_millis(duration))) {
         recent_loops = 0;
         match message {
+          ResponseType::Ready => {
+            println!("Owlbot is eager to send bots to Owlkatraz!");
+          }
           ResponseType::Event(event) => {
             match event {
               Event::Raid(raid_data) => {
@@ -576,6 +582,27 @@ fn main() -> NotcursesResult<()> {
               }
               Event::HypeTrainEnd(hype_end) => {
                 println!("The hype train ended at level {}!", hype_end.level);
+              }
+              Event::PredictionBegin(prediction_begin) => {
+                //println!("{:#?}", prediction_begin);
+              }
+              Event::PredictionProgress(prediction_progress) => {
+                //println!("{:#?}", prediction_progress);
+              }
+              Event::PredictionEnd(prediction_end) => {
+                // println!("{:#?}", prediction_end);
+              }
+              Event::PredictionLock(prediction_lock) => {
+                //println!("{:#?}", prediction_lock);
+              }
+              Event::PollBegin(begin_data) => {
+                // println!("{:#?}", begin_data);
+              }
+              Event::PollProgress(progress_data) => {
+                //println!("{:#?}", progress_data);
+              }
+              Event::PollEnd(end_data) => {
+                //println!("{:#?}", end_data);
               }
               Event::ChatMessage(message_data) => {
                 let username = message_data.chatter.name;
@@ -745,8 +772,9 @@ fn main() -> NotcursesResult<()> {
                       ));
                         }
                         ChatCommands::HowToQuote => {
-                          let _ = twitch.send_chat_message(
+                          let _ = twitch.send_chat_message_with_reply(
                             "Type \"don\'t quote\" to quote your previous message!".to_string(),
+                            Some(message_id),
                           );
                         }
                         ChatCommands::Quote => {
@@ -759,9 +787,10 @@ fn main() -> NotcursesResult<()> {
                             let idx = (rng * line_count).floor() as usize;
 
                             let quote = lines[idx];
-                            let _ = twitch.send_chat_message(quote.to_string());
+                            let _ = twitch
+                              .send_chat_message_with_reply(quote.to_string(), Some(message_id));
                           } else {
-                            let _ = twitch.send_chat_message(format!("The quotes were cleared! Make your own quote by sending the quote in chat, then have your next message contain \"don\'t quote me\" to create a quote."));
+                            let _ = twitch.send_chat_message_with_reply(format!("The quotes were cleared! Make your own quote by sending the quote in chat, then have your next message contain \"don\'t quote me\" to create a quote."), Some(message_id));
                           }
                         }
                         ChatCommands::Commands => {
@@ -793,10 +822,10 @@ fn main() -> NotcursesResult<()> {
                         | ChatCommands::Loork
                         | ChatCommands::Luwurk
                         | ChatCommands::Lurking => {
-                          let _ = twitch.send_chat_message(format!(
-                            "Thanks for coming by, appreciate the lurk {}!",
-                            username
-                          ));
+                          let _ = twitch.send_chat_message_with_reply(
+                            format!("Thanks for coming by, appreciate the lurk {}!", username),
+                            Some(message_id),
+                          );
                         }
                         ChatCommands::DotFiles => {
                           let _ = twitch.send_chat_message(format!(
@@ -946,11 +975,21 @@ fn main() -> NotcursesResult<()> {
                               5.. => RankVariety::Uncommon,
                               _ => RankVariety::Common,
                             };
-                            let _ = twitch.send_chat_message(format!(
-                              "{} is a {} variety viewer ({}P)",
-                              username, rank, viewer_num
-                            ));
+                            let _ = twitch.send_chat_message_with_reply(
+                              format!(
+                                "{} is a {} variety viewer ({}P)",
+                                username, rank, viewer_num
+                              ),
+                              Some(message_id),
+                            );
                           }
+                        }
+                        ChatCommands::Ranks => {
+                          let mut response = "The available ranks are as follows: ".to_string();
+                          for variant in RankVariety::all_variants() {
+                            response = format!("{}, {}", response, variant);
+                          }
+                          let _ = twitch.send_chat_message_with_reply(response, Some(message_id));
                         }
                         ChatCommands::OwlBeCringe => {
                           if let Ok(cringes) = fs::read_to_string(OWL_CRINGES) {
@@ -973,7 +1012,7 @@ fn main() -> NotcursesResult<()> {
                     }
 
                     (None, Some(close), _) => {
-                      twitch.send_chat_message(format!(
+                      let _ = twitch.send_chat_message(format!(
                         "Did you mean to type the !{:?} command",
                         close
                       ));
