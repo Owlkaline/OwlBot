@@ -1,5 +1,6 @@
 pub const QUOTES: &str = "quotes";
 pub const QOD: &str = "qod";
+pub const OWL_CRINGES: &str = "owlcringe";
 pub const STREAM_ACCOUNT: &str = "owlkalinevt";
 pub const STREAM_TWITCH_ID: &str = "122297321";
 
@@ -19,3 +20,4 @@ pub const CAPABILITY_REQUIREMENTS: &str = "CAP REQ";
 pub const PING: &str = "PING";
 
 pub const EMOTE_BUFFER_FILE: &str = "kitty_data";
+pub const RANK_BUFFER_FILE: &str = "veiwer_rank";

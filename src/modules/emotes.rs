@@ -5,6 +5,7 @@ use twitch_eventsub::{Emote, TwitchApi, TwitchEventSubApi};
 use std::{collections::HashMap, fs};
 
 use std::io::{Cursor, Read, Write};
+use twitch_eventsub::EmoteTemplateBuilder;
 
 use crate::EMOTE_BUFFER_FILE;
 
