@@ -276,6 +276,7 @@ fn main() -> NotcursesResult<()> {
     .generate_new_token_if_none(true)
     .generate_access_token_on_expire(true)
     .auto_save_load_created_tokens(".user_token.env", ".refresh_token.env")
+    .is_run_remotely()
     .add_subscriptions(vec![
       //Subscription::UserUpdate,
       Subscription::ChannelFollow,
@@ -292,10 +293,6 @@ fn main() -> NotcursesResult<()> {
       //Subscription::ChannelPollBegin,
       //Subscription::ChannelPollProgress,
       //Subscription::ChannelPollEnd,
-      Subscription::ChannelPredictionBegin,
-      Subscription::ChannelPredictionProgress,
-      Subscription::ChannelPredictionLock,
-      Subscription::ChannelPredictionEnd,
       //Subscription::ChannelGoalBegin,
       //Subscription::ChannelGoalProgress,
       //Subscription::ChannelGoalEnd,
