@@ -21,3 +21,6 @@ pub const PING: &str = "PING";
 
 pub const EMOTE_BUFFER_FILE: &str = "kitty_data";
 pub const RANK_BUFFER_FILE: &str = "veiwer_rank";
+pub const SPEECH_FILE: &str = "speech";
+
+pub const THE_GREAT_FIMSH: &str = "TheGreatFimsh";

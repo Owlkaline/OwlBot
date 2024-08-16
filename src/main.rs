@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::fmt::{self, Debug, Display};
 use std::fs;
 use std::io::{stdin, Read, Write};
-use std::process::Command;
 use std::process::Stdio;
+use std::process::{exit, Command};
 use std::str::SplitWhitespace;
 use std::time::Instant;
 use std::{thread, time::Duration};
@@ -20,7 +20,8 @@ use enum_all_variants::AllVariants;
 
 use sysinfo::{Components, Disks, Networks, System};
 
-use notcurses::*;
+use colored::*;
+use colors_transform::{Color, Rgb};
 
 mod modules;
 
@@ -86,6 +87,7 @@ enum ChatCommands {
   Editor,
   Distro,
   Projects,
+  Pronouns,
   Fimsh,
   Break,
   Throbber,
@@ -203,80 +205,45 @@ macro_rules! gp {
   };
 }
 
-fn main() -> NotcursesResult<()> {
-  //let mut nc = Notcurses::new_cli().unwrap();
-  //let mut cli = nc.cli_plane().unwrap();
+fn run_tts(text: String) {
+  let mut file = fs::File::create(SPEECH_FILE).unwrap();
+  file.write_all(format!("{}\n", text).as_bytes()).unwrap();
+  file.flush().unwrap();
+  if let Ok(_) = Command::new("dsnote").arg("./speech").output() {
+    thread::sleep(Duration::from_millis(1000));
+    if let Err(e) = Command::new("dsnote")
+      .arg("--action")
+      .arg("start-reading")
+      .output()
+    {
+      error!("TTS failed to read: {}", e);
+    }
+  }
+}
 
-  // let mut rng = rand::thread_rng();
-  // let range = Uniform::from(50..=200);
-  // let mut rgba_buf = Vec::<u8>::with_capacity(200 * 4);
-  // for _ in 0..=200 {
-  //   rgba_buf.push(rng.sample(&range));
-  //   rgba_buf.push(rng.sample(&range));
-  //   rgba_buf.push(rng.sample(&range));
-  //   rgba_buf.push(255);
-  // }
+pub struct ChatMessage {
+  username: String,
+  message: String,
+  username_colour: Rgb,
+  message_colour: Rgb,
+}
 
-  // let mut visual = Visual::from_rgba(rgba_buf.as_slice(), (5, 8)).unwrap();
-  // visual.set_blitter_pixel();
+//impl From<Reward> for ChatMessage {
+//  fn from(value: Reward) -> Self {}
+//}
 
-  // Blit the visual to a new plane:
-  // let mut new_plane = visual.blit(&mut nc)?;
-  // new_plane.render()?;
-  // thread::sleep(Duration::from_millis(1000));
-
-  //thread::sleep(Duration::from_millis(1000));
-  //cli.set_fg(0xDE935F);
-  // Blit the visual to a pre-existing plane:
-  //print!("Before plane");
-  // let pos = putstr![cli, "BEFORE PLANE"].unwrap();
-  //  cli.putstr("BEFORE PLANE");
-  //let mut existing_plane = Plane::builder().position(cli.cursor()).build(&mut nc)?;
-  //visual.blit_plane(&mut nc, &mut existing_plane)?;
-
-  // Blit the visual into a new child plane:
-  //let mut parent_plane = Plane::builder().position((pos, )).build(&mut nc)?;
-  // let mut child = visual.blit_child(&mut nc, &mut cli)?;
-  // child.move_to(cli.cursor());
-  //parent_plane.render()?;
-  //child.render()?;
-  // cli.putstr_at(
-  //   (
-  //     visual.size().unwrap().w() / 2 + cli.cursor().x(),
-  //     cli.cursor().y(),
-  //   ),
-  //   "AFTER PLANE",
-  // );
-  // cli.putstrln("");
-
-  // cli.render();
-
-  //existing_plane.render()?;
-  //thread::sleep(Duration::from_millis(1000));
-
-  //let mut visual = Visual::from_rgba(rgba_buf.as_slice(), (10, 20)).unwrap();
-  //let mut new_plane = visual.blit(&mut nc)?;
-  //new_plane.render()?;
-
-  //putstr![cli, "Before plane"];
-  //let mut existing_plane = Plane::builder().position((5, 0)).build(&mut nc)?;
-  //visual.blit_plane(&mut nc, &mut existing_plane)?;
-  //existing_plane.render()?;
-  //print!("after plane");
-  ////sleep(Duration::from_millis(1000));
-
-  // putstrln![cli, "<- Hello this is new owlbot!", cli.cursor()].unwrap();
+fn main() {
   let keys = TwitchKeys::from_secrets_env().unwrap();
   let redirect_url = "http://localhost:3000";
 
   println!("Owlbot booting up!");
-  let mut twitch = TwitchEventSubApi::builder(keys.clone())
+  let twitch = TwitchEventSubApi::builder(keys.clone())
     .set_redirect_url(redirect_url)
     .generate_new_token_if_insufficent_scope(true)
     .generate_new_token_if_none(true)
     .generate_access_token_on_expire(true)
     .auto_save_load_created_tokens(".user_token.env", ".refresh_token.env")
-    .is_run_remotely()
+    //  .is_run_remotely()
     .add_subscriptions(vec![
       //Subscription::UserUpdate,
       Subscription::ChannelFollow,
@@ -296,15 +263,16 @@ fn main() -> NotcursesResult<()> {
       //Subscription::ChannelGoalBegin,
       //Subscription::ChannelGoalProgress,
       //Subscription::ChannelGoalEnd,
-      //Subscription::ChannelHypeTrainBegin,
-      //Subscription::ChannelHypeTrainProgress,
-      //Subscription::ChannelHypeTrainEnd,
+      Subscription::ChannelHypeTrainBegin,
+      Subscription::ChannelHypeTrainProgress,
+      Subscription::ChannelHypeTrainEnd,
       //Subscription::ChannelShoutoutCreate,
       //Subscription::ChannelShoutoutReceive,
       Subscription::ChatMessage,
       //Subscription::BanTimeoutUser,
       Subscription::PermissionDeleteMessage,
       Subscription::PermissionReadChatters,
+      Subscription::ModeratorDeletedMessage,
       Subscription::AdBreakBegin,
     ])
     //.add_subscription(Subscription::ChatMessage)
@@ -327,8 +295,6 @@ fn main() -> NotcursesResult<()> {
     //   })
     //))
     .build();
-
-  // println!("{:?}", twitch);
 
   let mut twitch = twitch.unwrap();
   println!("Owlbot has been equipped!");
@@ -369,16 +335,16 @@ fn main() -> NotcursesResult<()> {
     }
   }
 
-  //let emotes = twitch.get_channel_emotes(STREAM_TWITCH_ID).unwrap();
+  // Happy -  English Britsh (Piper Semaine PrudenceMedium Female) - Happy TTS
+  // Nervous - Piper Jenny Medium Female
+  // NoFun VCTK p236 medium
+  // Clear - Piper Amy Low female
+  // Robot - RHVoice Slt Female
+  // Calm - Piper Kathleen Low Female
+  // Polite - Piper HFC Medium female
+  // Cute - VCTK p236 medium
 
-  //let new_image_data = attohttpc::get(emotes.from_idx(3)).send().unwrap();
-
-  // println!("\x1b_Ga=p,i=1,q=1\x1b\\");
-  //print!(
-  //  "\x1b_Ga=T,f=100;{}\x1b\\",
-  //  BASE64_STANDARD.encode(new_image_data.bytes().unwrap())
-  //);
-  //println!(" stuff after emote;");
+  // piper lessac high female - seems legit
 
   {
     let mut rng = thread_rng();
@@ -394,6 +360,21 @@ fn main() -> NotcursesResult<()> {
     let mut followers_in_last_10secs = 0;
     let mut follower_timer = 0.0;
     let delta_time = Instant::now();
+
+    let mut chat_lines = [""; 8];
+
+    let mut tts_queue: Vec<String> = Vec::new();
+    let mut last_message_spoken = Instant::now();
+    let mut wait_duration = 5;
+
+    let reward_response = twitch.create_custom_reward(CreateCustomReward {
+      title: "TestCustomReward".to_string(),
+      cost: 500,
+      ..Default::default()
+    });
+    println!("{:#?}", reward_response);
+
+    exit(1);
 
     loop {
       if recent_loops > 100 {
@@ -411,6 +392,13 @@ fn main() -> NotcursesResult<()> {
           followers_in_last_10secs = 0;
           follower_timer = 10.0;
         }
+      }
+
+      if tts_queue.len() > 0 && last_message_spoken.elapsed().as_secs() > wait_duration {
+        let text = tts_queue.remove(0);
+        wait_duration = (text.len() / 100 * 5).max(5).min(15) as u64;
+        run_tts(text);
+        last_message_spoken = Instant::now();
       }
 
       if bots_recently_vanquished > 0 {
@@ -449,6 +437,9 @@ fn main() -> NotcursesResult<()> {
                 //  "A {}min Ad has attacked! I try my best to not do anything interesting.",
                 //  break_data.duration_seconds / 60
                 //));
+              }
+              Event::MessageDeleted(deleted_message) => {
+                println!("Message was deleted ID: {}", deleted_message.message_id);
               }
               Event::ChannelPointsAutoRewardRedeem(auto_redeem) => {
                 let message = auto_redeem.message.text;
@@ -490,6 +481,11 @@ fn main() -> NotcursesResult<()> {
                   println!("{} has request Owl to live a rust free life.", user);
                 }
 
+                if title.contains("TTS") {
+                  tts_queue.push(input);
+                }
+
+                let mut great_fimsh_points: i32 = 0;
                 if let Some(viewer_num) = rank_buffer.get_mut(&user) {
                   let mut points = 0;
                   if title.contains("RankUp") {
@@ -497,23 +493,24 @@ fn main() -> NotcursesResult<()> {
                     *viewer_num += points;
                     if points > 0 {
                       let _ = twitch.send_chat_message(format!(
-                        "{}'s rank went up a little bit! ({})",
+                        "{}'s rank went up a little bit! (+{}P)",
                         user, points
                       ));
                     } else {
+                      great_fimsh_points = (rng.gen::<f32>() * 3.0).floor() as i32;
                       let _ = twitch.send_chat_message(format!(
-                        "{}'s rank got stuck in washing machine.",
+                        "{}'s rank didn't budge because the great fimsh stole it!",
                         user
                       ));
                     }
                   }
                   if title.contains("RankDown") {
-                    points = ((rng.gen::<f32>() * 3.0).floor() as u32).max(*viewer_num);
-                    *viewer_num -= points;
+                    great_fimsh_points =
+                      -((rng.gen::<f32>() * 3.0).floor() as i32).max(*viewer_num as i32);
 
                     let _ = twitch.send_chat_message(format!(
-                      "{}'s rank went down a little bit! ({})",
-                      user, points
+                      "The great fimsh's rank went down a little bit! (-{}P)",
+                      great_fimsh_points
                     ));
                   }
 
@@ -540,6 +537,17 @@ fn main() -> NotcursesResult<()> {
                     file
                       .write_all(format!("{}\n", rank_buffer_string).as_bytes())
                       .unwrap();
+                  }
+                }
+
+                if great_fimsh_points != 0 {
+                  if let Some(great_fimsh_number) = rank_buffer.get_mut(THE_GREAT_FIMSH) {
+                    *great_fimsh_number =
+                      (*great_fimsh_number as i32 + great_fimsh_points).max(0) as u32;
+                    let _ = twitch.send_chat_message(format!(
+                      "The great fimsh now possesses {}P",
+                      great_fimsh_number
+                    ));
                   }
                 }
               }
@@ -575,7 +583,10 @@ fn main() -> NotcursesResult<()> {
                 println!("{} cheered with {} bits!", cheer.user.name, cheer.bits);
               }
               Event::HypeTrainBegin(hype_train) => {
-                println!("A hype train has begun!");
+                println!("Train Begin: {:?}", hype_train);
+              }
+              Event::HypeTrainProgress(train_progress) => {
+                println!("Train Progress: {:?}", train_progress);
               }
               Event::HypeTrainEnd(hype_end) => {
                 println!("The hype train ended at level {}!", hype_end.level);
@@ -601,11 +612,19 @@ fn main() -> NotcursesResult<()> {
               Event::PollEnd(end_data) => {
                 //println!("{:#?}", end_data);
               }
+              Event::HypeTrainBegin(begin_train) => {}
+              Event::HypeTrainProgress(train_data) => {
+                println!("{:?}", train_data);
+              }
+              Event::HypeTrainEnd(train_data) => {
+                println!("{:?}", train_data);
+              }
               Event::ChatMessage(message_data) => {
                 let username = message_data.chatter.name;
                 let user_id = message_data.chatter.id;
                 let message = message_data.message.text;
                 let message_id = message_data.message_id;
+                let username_colour = message_data.colour;
 
                 match message_data.message_type {
                   MessageType::PowerUpsMessageEffect | MessageType::PowerUpsGigantifiedEmote => {
@@ -661,9 +680,22 @@ fn main() -> NotcursesResult<()> {
                   }
                 }
 
+                let mut colour = if username_colour.is_empty() {
+                  Rgb::from_hex_str("#2979ff").unwrap()
+                } else {
+                  Rgb::from_hex_str(&username_colour).unwrap()
+                };
                 if username.to_lowercase() != STREAM_ACCOUNT {
-                  print!("{}: ", username);
+                  print!(
+                    "{}:",
+                    String::from(format!("{}", username)).custom_color(CustomColor::new(
+                      colour.get_red() as u8,
+                      colour.get_green() as u8,
+                      colour.get_blue() as u8
+                    ))
+                  );
                 }
+                colour = colour.adjust_hue(90.0).set_lightness(80.0);
 
                 for fragments in &message_data.message.fragments {
                   match fragments.kind {
@@ -673,7 +705,14 @@ fn main() -> NotcursesResult<()> {
                       }
                     }
                     _ => {
-                      print!("{}", fragments.text);
+                      print!(
+                        "{}",
+                        String::from(format!("{}", fragments.text)).custom_color(CustomColor::new(
+                          colour.get_red() as u8,
+                          colour.get_green() as u8,
+                          colour.get_blue() as u8,
+                        ),)
+                      );
                     }
                   }
                 }
@@ -988,6 +1027,9 @@ fn main() -> NotcursesResult<()> {
                           }
                           let _ = twitch.send_chat_message_with_reply(response, Some(message_id));
                         }
+                        ChatCommands::Pronouns => {
+                          let _ = twitch.send_chat_message("Owl's pronouns are She/Her, thanks!");
+                        }
                         ChatCommands::OwlBeCringe => {
                           if let Ok(cringes) = fs::read_to_string(OWL_CRINGES) {
                             let lines = cringes.lines().collect::<Vec<_>>();
@@ -1040,6 +1082,7 @@ fn main() -> NotcursesResult<()> {
           }
           ResponseType::RawResponse(raw_data) => {
             let response = format!("RAW response: {}", raw_data);
+            warn!("{}", response.to_owned());
             println!("{}", response);
           }
           _ => {}

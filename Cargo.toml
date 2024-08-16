@@ -23,3 +23,5 @@ image = { version = "0.25.2", features = ["gif"] }
 attohttpc = "0.28.0"
 crossterm = "0.27.0"
 base64 = "0.22.1"
+colored = "2"
+colors-transform = "0.2.11"
