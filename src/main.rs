@@ -41,7 +41,16 @@ enum RankVariety {
   VeganGarden,
   SmoothedMeat,
   SmoothedVeganMeat,
+  BinChicken,
+  DirtyBinChicken,
+  Edged,
+  Sour,
+  Creamed,
+  Explosive,
+  Trackmaniac,
   Fimsh,
+  LongFimsh,
+  Nean,
   Holee,
 }
 
@@ -59,6 +68,15 @@ impl Display for RankVariety {
         RankVariety::SmoothedVeganMeat => "smoothed vegan meat",
         RankVariety::Fimsh => "fimsh",
         RankVariety::Holee => "HOLEE",
+        RankVariety::BinChicken => "Bin Chicken",
+        RankVariety::DirtyBinChicken => "Dirty Bin Chicken",
+        RankVariety::Edged => "Edged",
+        RankVariety::Sour => "Sour",
+        RankVariety::Creamed => "Creamed",
+        RankVariety::Explosive => "Explosive",
+        RankVariety::Trackmaniac => "Trackmaniac",
+        RankVariety::LongFimsh => "Long fimsh",
+        RankVariety::Nean => "Nean",
       }
     )
   }
@@ -103,6 +121,8 @@ enum ChatCommands {
   Rank,
   Ranks,
   OwlBeCringe,
+  Holee,
+  Heckies,
 }
 
 impl ChatCommands {
@@ -209,28 +229,104 @@ fn run_tts(text: String) {
   let mut file = fs::File::create(SPEECH_FILE).unwrap();
   file.write_all(format!("{}\n", text).as_bytes()).unwrap();
   file.flush().unwrap();
-  if let Ok(_) = Command::new("dsnote").arg("./speech").output() {
-    thread::sleep(Duration::from_millis(1000));
-    if let Err(e) = Command::new("dsnote")
-      .arg("--action")
-      .arg("start-reading")
-      .output()
-    {
-      error!("TTS failed to read: {}", e);
+
+  thread::spawn(|| {
+    if let Ok(_) = Command::new("dsnote").arg("./speech").output() {
+      thread::sleep(Duration::from_millis(1000));
+      if let Err(e) = Command::new("dsnote")
+        .arg("--action")
+        .arg("start-reading")
+        .output()
+      {
+        error!("TTS failed to read: {}", e);
+      }
+    }
+  });
+}
+
+pub fn print_fragments(
+  twitch: &mut TwitchEventSubApi,
+  emote_buffer: &mut HashMap<String, u32>,
+  fragments: &Vec<Fragments>,
+  colour: Rgb,
+) {
+  for fragment in fragments {
+    match fragment.kind {
+      FragmentType::Emote => {
+        if let Some(emote) = &fragment.emote {
+          emotes::print_emote(twitch, emote.clone(), emote_buffer);
+        }
+      }
+      _ => {
+        print!(
+          "{}",
+          String::from(format!("{}", fragment.text)).custom_color(CustomColor::new(
+            colour.get_red() as u8,
+            colour.get_green() as u8,
+            colour.get_blue() as u8,
+          ),)
+        );
+      }
     }
   }
+  println!("")
 }
 
 pub struct ChatMessage {
+  id: String,
   username: String,
-  message: String,
+  message: Vec<Fragments>,
   username_colour: Rgb,
   message_colour: Rgb,
 }
 
-//impl From<Reward> for ChatMessage {
-//  fn from(value: Reward) -> Self {}
-//}
+impl ChatMessage {
+  pub fn print(&self, twitch: &mut TwitchEventSubApi, emote_buffer: &mut HashMap<String, u32>) {
+    if self.username.to_lowercase() != STREAM_ACCOUNT {
+      print!(
+        "{}:",
+        String::from(format!("{}", self.username)).custom_color(CustomColor::new(
+          self.username_colour.get_red() as u8,
+          self.username_colour.get_green() as u8,
+          self.username_colour.get_blue() as u8
+        ))
+      );
+    }
+    print_fragments(twitch, emote_buffer, &self.message, self.message_colour);
+  }
+}
+
+impl From<&MessageData> for ChatMessage {
+  fn from(value: &MessageData) -> Self {
+    let username_colour = if value.colour.is_empty() {
+      Rgb::from_hex_str("#2979ff").unwrap()
+    } else {
+      Rgb::from_hex_str(&value.colour).unwrap()
+    };
+    let message_colour = username_colour.adjust_hue(90.0).set_lightness(80.0);
+    ChatMessage {
+      id: value.message_id.to_owned(),
+      username: value.chatter.name.to_owned(),
+      message: value.message.fragments.to_owned(),
+      username_colour,
+      message_colour,
+    }
+  }
+}
+
+pub fn recreate_chat<T: Into<String>>(
+  deleted_message_id: T,
+  past_chat_messages: &mut Vec<ChatMessage>,
+  twitch: &mut TwitchEventSubApi,
+  emote_buffer: &mut HashMap<String, u32>,
+) {
+  let _ = Command::new("clear").output().unwrap();
+  let deleted_message_id = deleted_message_id.into();
+  past_chat_messages.retain(|c| c.id != deleted_message_id);
+  past_chat_messages.iter().for_each(|message| {
+    message.print(twitch, emote_buffer);
+  })
+}
 
 fn main() {
   let keys = TwitchKeys::from_secrets_env().unwrap();
@@ -272,6 +368,7 @@ fn main() {
       //Subscription::BanTimeoutUser,
       Subscription::PermissionDeleteMessage,
       Subscription::PermissionReadChatters,
+      Subscription::PermissionSendAnnouncements,
       Subscription::ModeratorDeletedMessage,
       Subscription::AdBreakBegin,
     ])
@@ -305,6 +402,11 @@ fn main() {
   let mut emote_buffer = HashMap::new();
   let mut rank_buffer = HashMap::new();
 
+  let mut holy_counter = 0;
+  let mut heckies_counter = 0;
+
+  let mut counter_cooldown = Instant::now();
+
   if let Ok(kitty_data) = fs::read_to_string("kitty_emotes") {
     for line in kitty_data.lines() {
       match line.split_whitespace().collect::<Vec<_>>().to_vec()[..] {
@@ -321,6 +423,20 @@ fn main() {
       match line.split_whitespace().collect::<Vec<_>>().to_vec()[..] {
         [viewer, rank_num] => {
           rank_buffer.insert(viewer.to_string(), rank_num.parse::<u32>().unwrap());
+        }
+        _ => {}
+      }
+    }
+  }
+
+  if let Ok(counters) = fs::read_to_string(COUNTERS_FILE) {
+    for line in counters.lines() {
+      match line.split_whitespace().collect::<Vec<_>>().to_vec()[..] {
+        ["Holy", count] => {
+          holy_counter = count.parse::<u128>().unwrap();
+        }
+        ["Heckies", count] => {
+          heckies_counter = count.parse::<u128>().unwrap();
         }
         _ => {}
       }
@@ -361,7 +477,7 @@ fn main() {
     let mut follower_timer = 0.0;
     let delta_time = Instant::now();
 
-    let mut chat_lines = [""; 8];
+    let mut past_chat_messages: Vec<ChatMessage> = Vec::new();
 
     let mut tts_queue: Vec<String> = Vec::new();
     let mut last_message_spoken = Instant::now();
@@ -372,9 +488,11 @@ fn main() {
       cost: 500,
       ..Default::default()
     });
-    println!("{:#?}", reward_response);
-
-    exit(1);
+    if let Ok(rewards) = reward_response {
+      if rewards.data.len() > 0 {
+        let _ = twitch.delete_custom_reward(rewards.data[0].id.to_owned());
+      }
+    }
 
     loop {
       if recent_loops > 100 {
@@ -396,7 +514,7 @@ fn main() {
 
       if tts_queue.len() > 0 && last_message_spoken.elapsed().as_secs() > wait_duration {
         let text = tts_queue.remove(0);
-        wait_duration = (text.len() / 100 * 5).max(5).min(15) as u64;
+        wait_duration = (text.len() / 100 * 5).max(5).min(18) as u64;
         run_tts(text);
         last_message_spoken = Instant::now();
       }
@@ -440,6 +558,12 @@ fn main() {
               }
               Event::MessageDeleted(deleted_message) => {
                 println!("Message was deleted ID: {}", deleted_message.message_id);
+                recreate_chat(
+                  deleted_message.message_id,
+                  &mut past_chat_messages,
+                  &mut twitch,
+                  &mut emote_buffer,
+                );
               }
               Event::ChannelPointsAutoRewardRedeem(auto_redeem) => {
                 let message = auto_redeem.message.text;
@@ -482,7 +606,11 @@ fn main() {
                 }
 
                 if title.contains("TTS") {
-                  tts_queue.push(input);
+                  if input.split_whitespace().count() > 1 {
+                    tts_queue.push(format!("{} says {}", user, input));
+                  } else {
+                    tts_queue.push(format!("{}", input));
+                  }
                 }
 
                 let mut great_fimsh_points: i32 = 0;
@@ -497,16 +625,22 @@ fn main() {
                         user, points
                       ));
                     } else {
-                      great_fimsh_points = (rng.gen::<f32>() * 3.0).floor() as i32;
-                      let _ = twitch.send_chat_message(format!(
-                        "{}'s rank didn't budge because the great fimsh stole it!",
-                        user
-                      ));
+                      great_fimsh_points = (rng.gen::<f32>() * 3.0).ceil() as i32;
+                      if great_fimsh_points == 3 {
+                        *viewer_num -= 4;
+                        great_fimsh_points += 1;
+                        let _ = twitch.send_chat_message(format!("{}'s rank got stuck and then was help by the great fimsh, so it gave some of it's points to the great fimsh!", user));
+                      } else {
+                        let _ = twitch.send_chat_message(format!(
+                          "{}'s rank didn't budge because the great fimsh stole it!",
+                          user
+                        ));
+                      }
                     }
                   }
                   if title.contains("RankDown") {
                     great_fimsh_points =
-                      -((rng.gen::<f32>() * 3.0).floor() as i32).max(*viewer_num as i32);
+                      -((rng.gen::<f32>() * 4.0).floor() as i32).max(*viewer_num as i32);
 
                     let _ = twitch.send_chat_message(format!(
                       "The great fimsh's rank went down a little bit! (-{}P)",
@@ -538,16 +672,16 @@ fn main() {
                       .write_all(format!("{}\n", rank_buffer_string).as_bytes())
                       .unwrap();
                   }
-                }
 
-                if great_fimsh_points != 0 {
-                  if let Some(great_fimsh_number) = rank_buffer.get_mut(THE_GREAT_FIMSH) {
-                    *great_fimsh_number =
-                      (*great_fimsh_number as i32 + great_fimsh_points).max(0) as u32;
-                    let _ = twitch.send_chat_message(format!(
-                      "The great fimsh now possesses {}P",
-                      great_fimsh_number
-                    ));
+                  if great_fimsh_points != 0 {
+                    if let Some(great_fimsh_number) = rank_buffer.get_mut(THE_GREAT_FIMSH) {
+                      *great_fimsh_number =
+                        (*great_fimsh_number as i32 + great_fimsh_points).max(0) as u32;
+                      let _ = twitch.send_chat_message(format!(
+                        "The great fimsh now possesses {}P",
+                        great_fimsh_number
+                      ));
+                    }
                   }
                 }
               }
@@ -620,11 +754,10 @@ fn main() {
                 println!("{:?}", train_data);
               }
               Event::ChatMessage(message_data) => {
+                let chat_message = ChatMessage::from(&message_data);
                 let username = message_data.chatter.name;
-                let user_id = message_data.chatter.id;
                 let message = message_data.message.text;
                 let message_id = message_data.message_id;
-                let username_colour = message_data.colour;
 
                 match message_data.message_type {
                   MessageType::PowerUpsMessageEffect | MessageType::PowerUpsGigantifiedEmote => {
@@ -639,6 +772,7 @@ fn main() {
                 // First time chatter!
                 let lower_message = message.to_ascii_lowercase();
                 if !all_messages.contains_key(&username)
+                  && !rank_buffer.contains_key(&username)
                   && username.to_lowercase() != STREAM_ACCOUNT
                 {
                   let is_link = lower_message
@@ -671,52 +805,28 @@ fn main() {
                       .count()
                       > 1
                   {
-                    if let Ok(_) = twitch.delete_message(message_id) {
+                    if let Ok(_) = twitch.delete_message(&message_id) {
                       bots_recently_vanquished += 1;
                       time_since_last_vanquish = Instant::now();
+                      recreate_chat(
+                        message_id,
+                        &mut past_chat_messages,
+                        &mut twitch,
+                        &mut emote_buffer,
+                      );
                     }
 
                     continue;
                   }
                 }
 
-                let mut colour = if username_colour.is_empty() {
-                  Rgb::from_hex_str("#2979ff").unwrap()
-                } else {
-                  Rgb::from_hex_str(&username_colour).unwrap()
-                };
                 if username.to_lowercase() != STREAM_ACCOUNT {
-                  print!(
-                    "{}:",
-                    String::from(format!("{}", username)).custom_color(CustomColor::new(
-                      colour.get_red() as u8,
-                      colour.get_green() as u8,
-                      colour.get_blue() as u8
-                    ))
-                  );
-                }
-                colour = colour.adjust_hue(90.0).set_lightness(80.0);
-
-                for fragments in &message_data.message.fragments {
-                  match fragments.kind {
-                    FragmentType::Emote => {
-                      if let Some(emote) = &fragments.emote {
-                        emotes::print_emote(&mut twitch, emote.clone(), &mut emote_buffer);
-                      }
-                    }
-                    _ => {
-                      print!(
-                        "{}",
-                        String::from(format!("{}", fragments.text)).custom_color(CustomColor::new(
-                          colour.get_red() as u8,
-                          colour.get_green() as u8,
-                          colour.get_blue() as u8,
-                        ),)
-                      );
-                    }
+                  chat_message.print(&mut twitch, &mut emote_buffer);
+                  past_chat_messages.push(chat_message);
+                  if past_chat_messages.len() > 20 {
+                    past_chat_messages.remove(0);
                   }
                 }
-                println!("");
 
                 // comment
                 all_messages
@@ -935,6 +1045,13 @@ fn main() {
                                 "{} is an awesome streamer, follow them at http://twitch.tv/{}",
                                 parameters[0], parameters[0],
                               ));
+                              let _ = twitch.send_announcement(
+                                format!(
+                                  "{} is an awesome streamer, follow them at http://twitch.tv/{}",
+                                  parameters[0], parameters[0],
+                                ),
+                                None::<String>,
+                              );
                             }
                           }
                         }
@@ -945,6 +1062,7 @@ fn main() {
                               .find(|line| !line.starts_with("//"))
                               .unwrap_or("Owl messed something up");
                             let _ = twitch.send_chat_message(msg);
+                            println!("QOD: {}", msg);
                           } else {
                             let _ = twitch.send_chat_message("Question of the day, what a meme!");
                           }
@@ -1002,8 +1120,17 @@ fn main() {
                         ChatCommands::Rank => {
                           if let Some(viewer_num) = rank_buffer.get_mut(&username) {
                             let rank = match *viewer_num {
-                              90.. => RankVariety::Holee,
-                              70.. => RankVariety::Fimsh,
+                              400.. => RankVariety::Holee,
+                              300.. => RankVariety::Nean,
+                              250.. => RankVariety::LongFimsh,
+                              200.. => RankVariety::Fimsh,
+                              170.. => RankVariety::Trackmaniac,
+                              140.. => RankVariety::Explosive,
+                              130.. => RankVariety::Creamed,
+                              120.. => RankVariety::Sour,
+                              110.. => RankVariety::Edged,
+                              90.. => RankVariety::DirtyBinChicken,
+                              70.. => RankVariety::BinChicken,
                               50.. => RankVariety::SmoothedVeganMeat,
                               30.. => RankVariety::SmoothedMeat,
                               20.. => RankVariety::VeganGarden,
@@ -1028,7 +1155,9 @@ fn main() {
                           let _ = twitch.send_chat_message_with_reply(response, Some(message_id));
                         }
                         ChatCommands::Pronouns => {
-                          let _ = twitch.send_chat_message("Owl's pronouns are She/Her, thanks!");
+                          let msg = "Owl's pronouns are She/Her, thanks!";
+                          let _ = twitch.send_chat_message(msg);
+                          println!("{}", msg);
                         }
                         ChatCommands::OwlBeCringe => {
                           if let Ok(cringes) = fs::read_to_string(OWL_CRINGES) {
@@ -1042,9 +1171,42 @@ fn main() {
                             let cringe = lines[idx];
                             let _ = twitch.send_chat_message(cringe.to_string());
                           } else {
-                            let _ = twitch.send_chat_message(format!(
+                            let _ = twitch.send_announcement(
+                              format!(
                               "Owl's out of cringes, so you best go follow tiwtch.tv/bixiavt now!"
+                            ),
+                              None::<String>,
+                            );
+                          }
+                        }
+                        ChatCommands::Holee => {
+                          if counter_cooldown.elapsed().as_secs() > 5 {
+                            counter_cooldown = Instant::now();
+                            holy_counter += 1;
+                            let _ = twitch.send_chat_message(format!(
+                              "Owl has said holy {} times!",
+                              holy_counter
                             ));
+                            let mut file = fs::File::create(COUNTERS_FILE).unwrap();
+                            let counters =
+                              format!("Holy {}\nHeckies {}", holy_counter, heckies_counter);
+                            file.write_all(counters.as_bytes()).unwrap();
+                            file.flush().unwrap();
+                          }
+                        }
+                        ChatCommands::Heckies => {
+                          if counter_cooldown.elapsed().as_secs() > 5 {
+                            counter_cooldown = Instant::now();
+                            heckies_counter += 1;
+                            let _ = twitch.send_chat_message(format!(
+                              "Owl has said heckies {} times!",
+                              heckies_counter
+                            ));
+                            let mut file = fs::File::create(COUNTERS_FILE).unwrap();
+                            let counters =
+                              format!("Holy {}\nHeckies {}", holy_counter, heckies_counter);
+                            file.write_all(counters.as_bytes()).unwrap();
+                            file.flush().unwrap();
                           }
                         }
                       }
@@ -1076,6 +1238,11 @@ fn main() {
           // MessageType::AdBreakNotification(duration) => {
           //   twitch.send_chat_message(format!("A {}min Ad has attacked! sorry for any inconviences. I try my best to not do anything interesting and hope you at least get hilarious ads!", duration / 60));
           // }
+          ResponseType::Close => {
+            error!("Websockets decided to close.");
+            break;
+            //twitch.restart_websockets();
+          }
           ResponseType::Error(event_sub_error) => {
             println!("{:?}", event_sub_error);
             error!("{:?}", event_sub_error);
