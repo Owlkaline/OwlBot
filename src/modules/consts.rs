@@ -3,6 +3,7 @@ pub const QOD: &str = "qod";
 pub const OWL_CRINGES: &str = "owlcringe";
 pub const STREAM_ACCOUNT: &str = "owlkalinevt";
 pub const STREAM_TWITCH_ID: &str = "122297321";
+pub const AUDIO_ALERT_BOT: &str = "SoundAlerts";
 
 pub const CONNECTION: &'static str = "ws://irc-ws.chat.twitch.tv:80";
 pub const CONNECTION_EVENTS: &'static str =

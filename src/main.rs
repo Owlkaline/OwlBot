@@ -1,5 +1,8 @@
+use log::LevelFilter;
+
 use rand::thread_rng;
 use rand::{distributions::Uniform, Rng};
+use serde::{Deserialize as Deserialise, Serialize as Serialise};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Display};
@@ -28,7 +31,7 @@ mod modules;
 use modules::{consts::*, emotes};
 //use modules::TwitchChat;
 
-use twitch_eventsub::{
+use twitcheventsub::{
   error, Event, EventSubError, ResponseType, Subscription, TokenAccess, TwitchEventSubApi,
   TwitchHttpRequest, TwitchKeys, *,
 };
@@ -122,6 +125,7 @@ enum ChatCommands {
   Ranks,
   OwlBeCringe,
   Holee,
+  Spill,
   Heckies,
 }
 
@@ -250,22 +254,28 @@ pub fn print_fragments(
   fragments: &Vec<Fragments>,
   colour: Rgb,
 ) {
+  let mut emote_chain = false;
   for fragment in fragments {
     match fragment.kind {
       FragmentType::Emote => {
         if let Some(emote) = &fragment.emote {
-          emotes::print_emote(twitch, emote.clone(), emote_buffer);
+          //print!("\x08");
+          emotes::print_emote(twitch, emote.clone(), emote_buffer, emote_chain);
+          emote_chain = true;
         }
       }
       _ => {
-        print!(
-          "{}",
-          String::from(format!("{}", fragment.text)).custom_color(CustomColor::new(
-            colour.get_red() as u8,
-            colour.get_green() as u8,
-            colour.get_blue() as u8,
-          ),)
-        );
+        if fragment.text != " " {
+          emote_chain = false;
+          print!(
+            "{}",
+            String::from(format!("{}", fragment.text)).custom_color(CustomColor::new(
+              colour.get_red() as u8,
+              colour.get_green() as u8,
+              colour.get_blue() as u8,
+            ),)
+          );
+        }
       }
     }
   }
@@ -328,7 +338,72 @@ pub fn recreate_chat<T: Into<String>>(
   })
 }
 
+fn shoutout<T: Into<String>>(twitch: &mut TwitchEventSubApi, username: T) {
+  let username = username.into();
+  let _ = twitch.send_chat_message(format!(
+    "{} is an awesome streamer, follow them at http://twitch.tv/{}",
+    username, username,
+  ));
+  let _ = twitch.send_announcement(
+    format!(
+      "{} is an awesome streamer, follow them at http://twitch.tv/{}",
+      username, username,
+    ),
+    None::<String>,
+  );
+}
+
+#[derive(Serialise, Deserialise)]
+pub struct Counters {
+  heckies: u128,
+  holee: u128,
+  spilled: u128,
+}
+
+impl Default for Counters {
+  fn default() -> Self {
+    Counters {
+      heckies: 0,
+      holee: 0,
+      spilled: 0,
+    }
+  }
+}
+
+impl Counters {
+  pub fn load() -> Counters {
+    let mut counters = Counters::default();
+    if let Ok(counter_string) = fs::read_to_string(COUNTERS_FILE) {
+      counters = serde_json::from_str(&counter_string).unwrap();
+    }
+
+    counters
+  }
+
+  pub fn save(&self) {
+    let mut file = fs::File::create(COUNTERS_FILE).unwrap();
+    if let Ok(counters) = serde_json::to_string(self) {
+      file.write_all(counters.as_bytes()).unwrap();
+    }
+    file.flush().unwrap();
+  }
+
+  pub fn holy_text(&self) -> String {
+    format!("has said holy {} times!", self.holee)
+  }
+
+  pub fn heckies_text(&self) -> String {
+    format!("has said heckies {} times!", self.heckies)
+  }
+
+  pub fn spilled_text(&self) -> String {
+    format!("has spilled {} drinks!", self.spilled)
+  }
+}
+
 fn main() {
+  let _ = simple_logging::log_to_file("twitch_events.log", LevelFilter::Info);
+
   let keys = TwitchKeys::from_secrets_env().unwrap();
   let redirect_url = "http://localhost:3000";
 
@@ -338,6 +413,8 @@ fn main() {
     .generate_new_token_if_insufficent_scope(true)
     .generate_new_token_if_none(true)
     .generate_access_token_on_expire(true)
+    .is_run_remotely()
+    .enable_irc("owlkalinevt", "owlkalinevt")
     .auto_save_load_created_tokens(".user_token.env", ".refresh_token.env")
     //  .is_run_remotely()
     .add_subscriptions(vec![
@@ -371,6 +448,8 @@ fn main() {
       Subscription::PermissionSendAnnouncements,
       Subscription::ModeratorDeletedMessage,
       Subscription::AdBreakBegin,
+      Subscription::PermissionIRCRead,
+      Subscription::PermissionIRCWrite,
     ])
     //.add_subscription(Subscription::ChatMessage)
     //.add_subscription(Subscription::ChannelPointsCustomRewardRedeem)
@@ -402,9 +481,6 @@ fn main() {
   let mut emote_buffer = HashMap::new();
   let mut rank_buffer = HashMap::new();
 
-  let mut holy_counter = 0;
-  let mut heckies_counter = 0;
-
   let mut counter_cooldown = Instant::now();
 
   if let Ok(kitty_data) = fs::read_to_string("kitty_emotes") {
@@ -429,19 +505,9 @@ fn main() {
     }
   }
 
-  if let Ok(counters) = fs::read_to_string(COUNTERS_FILE) {
-    for line in counters.lines() {
-      match line.split_whitespace().collect::<Vec<_>>().to_vec()[..] {
-        ["Holy", count] => {
-          holy_counter = count.parse::<u128>().unwrap();
-        }
-        ["Heckies", count] => {
-          heckies_counter = count.parse::<u128>().unwrap();
-        }
-        _ => {}
-      }
-    }
-  }
+  // heckies 26
+  // holee 136
+  let mut counter = Counters::load();
 
   if let Ok(chatters) = twitch.get_chatters() {
     for chatter in chatters.data {
@@ -483,16 +549,19 @@ fn main() {
     let mut last_message_spoken = Instant::now();
     let mut wait_duration = 5;
 
-    let reward_response = twitch.create_custom_reward(CreateCustomReward {
-      title: "TestCustomReward".to_string(),
-      cost: 500,
-      ..Default::default()
-    });
-    if let Ok(rewards) = reward_response {
-      if rewards.data.len() > 0 {
-        let _ = twitch.delete_custom_reward(rewards.data[0].id.to_owned());
-      }
-    }
+    // let reward_response = twitch.create_custom_reward(CreateCustomReward {
+    //   title: "TestCustomReward".to_string(),
+    //   cost: 500,
+    //   ..Default::default()
+    // });
+
+    // println!("{:?}", reward_response);
+    // if let Ok(rewards) = reward_response {
+    //   println!("{:?}", rewards);
+    //   if rewards.data.len() > 0 {
+    //     let _ = twitch.delete_custom_reward(rewards.data[0].id.to_owned());
+    //   }
+    // }
 
     loop {
       if recent_loops > 100 {
@@ -505,7 +574,10 @@ fn main() {
       if follower_timer <= 0.0 {
         if followers_in_last_10secs > 10 {
           follower_timer = 120.0;
-          let _ = twitch.send_chat_message("Warning: Channel may be current being follow botted!");
+          let follow_bot_warning = "Warning: Channel may be current being follow botted!";
+          let _ = twitch.send_chat_message(follow_bot_warning);
+          println!("{}", follow_bot_warning);
+          warn!("{}", follow_bot_warning);
         } else {
           followers_in_last_10secs = 0;
           follower_timer = 10.0;
@@ -514,17 +586,19 @@ fn main() {
 
       if tts_queue.len() > 0 && last_message_spoken.elapsed().as_secs() > wait_duration {
         let text = tts_queue.remove(0);
-        wait_duration = (text.len() / 100 * 5).max(5).min(18) as u64;
+        wait_duration = (text.len() / 100 * 7).max(5).min(18) as u64;
         run_tts(text);
         last_message_spoken = Instant::now();
       }
 
       if bots_recently_vanquished > 0 {
         if time_since_last_vanquish.elapsed().as_secs_f32() > 30.0 {
-          let _ = twitch.send_chat_message(format!(
+          let bots_sent_to_owlkatraz = format!(
             "{} bot/s were sent to Owlkatraz, give OwlBot many pats.",
             bots_recently_vanquished
-          ));
+          );
+          let _ = twitch.send_chat_message(bots_sent_to_owlkatraz.to_owned());
+          println!("{}", bots_sent_to_owlkatraz);
           bots_recently_vanquished = 0;
         }
       }
@@ -543,12 +617,14 @@ fn main() {
                   raid_data.from_broadcaster.name, raid_data.viewers
                 );
                 if raid_data.viewers >= 5 {
-                  let _ =
-                    twitch.send_chat_message(format!("!so {}", raid_data.from_broadcaster.name));
+                  shoutout(&mut twitch, raid_data.from_broadcaster.name);
+                  //let _ =
+                  //  twitch.send_chat_message(format!("!so {}", raid_data.from_broadcaster.name));
                 }
               }
               Event::Follow(follow_data) => {
                 followers_in_last_10secs += 1;
+                //println!("{} followed!", follow_data.);
               }
               Event::AdBreakBegin(break_data) => {
                 //twitch.send_chat_message(format!(
@@ -557,7 +633,7 @@ fn main() {
                 //));
               }
               Event::MessageDeleted(deleted_message) => {
-                println!("Message was deleted ID: {}", deleted_message.message_id);
+                //println!("Message was deleted ID: {}", deleted_message.message_id);
                 recreate_chat(
                   deleted_message.message_id,
                   &mut past_chat_messages,
@@ -601,8 +677,19 @@ fn main() {
                 if title.contains("editor") {
                   println!("{} has requested Owl uses {}", user, input);
                 }
+                if title.contains("Video") {
+                  println!("{}: Redeemed Video", user);
+                  continue;
+                }
                 if title.contains("game") {
                   println!("{} has request Owl to live a rust free life.", user);
+                }
+
+                if title.contains("Feed the fimsh!") {
+                  println!("{} fed the fimsh!", user);
+                }
+                if title.contains("Feed the fimsh! x10") {
+                  println!("{} fed the fimsh 10x times!", user);
                 }
 
                 if title.contains("TTS") {
@@ -620,21 +707,27 @@ fn main() {
                     points = (rng.gen::<f32>() * 3.0).floor() as u32;
                     *viewer_num += points;
                     if points > 0 {
-                      let _ = twitch.send_chat_message(format!(
-                        "{}'s rank went up a little bit! (+{}P)",
-                        user, points
-                      ));
+                      let rank_up_text =
+                        format!("{}'s rank went up a little bit! (+{}P)", user, points);
+                      let _ = twitch.send_chat_message(rank_up_text.to_owned());
+                      println!("{}", rank_up_text);
                     } else {
                       great_fimsh_points = (rng.gen::<f32>() * 3.0).ceil() as i32;
                       if great_fimsh_points == 3 {
-                        *viewer_num -= 4;
+                        //*viewer_num -= 4;
+                        *viewer_num = viewer_num.saturating_sub(4);
+                        points = 1;
                         great_fimsh_points += 1;
-                        let _ = twitch.send_chat_message(format!("{}'s rank got stuck and then was help by the great fimsh, so it gave some of it's points to the great fimsh!", user));
+                        let great_fimsh_text = format!("{}'s rank got stuck and then was help by the great fimsh, so it gave some of it's points to the great fimsh!", user);
+                        let _ = twitch.send_chat_message(great_fimsh_text.to_owned());
+                        println!("{}", great_fimsh_text);
                       } else {
-                        let _ = twitch.send_chat_message(format!(
+                        let didnt_budge_text = format!(
                           "{}'s rank didn't budge because the great fimsh stole it!",
                           user
-                        ));
+                        );
+                        let _ = twitch.send_chat_message(didnt_budge_text.to_owned());
+                        println!("{}", didnt_budge_text);
                       }
                     }
                   }
@@ -677,10 +770,10 @@ fn main() {
                     if let Some(great_fimsh_number) = rank_buffer.get_mut(THE_GREAT_FIMSH) {
                       *great_fimsh_number =
                         (*great_fimsh_number as i32 + great_fimsh_points).max(0) as u32;
-                      let _ = twitch.send_chat_message(format!(
-                        "The great fimsh now possesses {}P",
-                        great_fimsh_number
-                      ));
+                      let great_fimsh_p =
+                        format!("The great fimsh now possesses {}P", great_fimsh_number);
+                      let _ = twitch.send_chat_message(great_fimsh_p.to_owned());
+                      println!("{}", great_fimsh_p);
                     }
                   }
                 }
@@ -761,10 +854,13 @@ fn main() {
 
                 match message_data.message_type {
                   MessageType::PowerUpsMessageEffect | MessageType::PowerUpsGigantifiedEmote => {
+                    let mut powerup_support_text =
+                      format!("Thank you for supporting the channel {}!", username);
                     let _ = twitch.send_chat_message_with_reply(
-                      format!("Thank you for supporting the channel {}!", username),
+                      powerup_support_text.to_owned(),
                       Some(message_id.to_owned()),
                     );
+                    println!("{}", powerup_support_text);
                   }
                   _ => {}
                 }
@@ -786,15 +882,9 @@ fn main() {
                     "streamrise",
                     "onlyfans",
                     "http",
-                    "promotion",
-                    "activate",
-                    ".ly",
-                    ".com",
-                    ".to",
+                    "promot",
+                    "activat",
                     "free",
-                    ".store",
-                    ".xyz",
-                    ".org",
                     "hosthub",
                   ];
 
@@ -818,6 +908,21 @@ fn main() {
 
                     continue;
                   }
+                }
+
+                if message_data.first_time_chatter {
+                  print!("FTC: ");
+                }
+                if message_data.returning_chatter {
+                  print!("RC: ");
+                }
+                if message_data.moderator {
+                  print!("Cute moderator -> ");
+                }
+
+                if username == AUDIO_ALERT_BOT {
+                  if let Ok(_) = twitch.delete_message(&message_id) {}
+                  continue;
                 }
 
                 if username.to_lowercase() != STREAM_ACCOUNT {
@@ -877,7 +982,27 @@ fn main() {
                   );
                 }
 
-                if message.as_bytes()[0] as char == '!' {
+                let is_commmand = message.as_bytes()[0] as char == '!';
+
+                if !is_commmand && username.to_lowercase() != STREAM_ACCOUNT {
+                  if message.contains("holee") | message.contains("holy") {
+                    if let Err(_) = twitch.send_chat_message(counter.holy_text()) {
+                      println!("Owl {}", counter.holy_text());
+                    }
+                  }
+                  if message.contains("spill") {
+                    if let Err(_) = twitch.send_chat_message(counter.spilled_text()) {
+                      println!("Owl {}", counter.spilled_text());
+                    }
+                  }
+                  if message.contains("heckies") {
+                    if let Err(_) = twitch.send_chat_message(counter.heckies_text()) {
+                      println!("Owl {}", counter.heckies_text());
+                    }
+                  }
+                }
+
+                if is_commmand {
                   match ChatCommands::is_command(&String::from_utf8_lossy(&message.as_bytes()[1..]))
                   {
                     (Some(command), None, parameters) => {
@@ -952,12 +1077,13 @@ fn main() {
                           let ram_used = sys.used_memory() as f32 / 1000000000.0;
                           let total_ram = sys.total_memory() as f32 / 1000000000.0;
 
-                          let _ = twitch.send_chat_message(format!(
+                          let ram_text = format!(
                             "Current Ram: {:.1}/{:.1} Gb ({:.0}%)",
                             ram_used,
                             total_ram,
                             (ram_used / total_ram * 100.0).round()
-                          ));
+                          );
+                          let _ = twitch.send_chat_message(ram_text);
                         }
                         ChatCommands::Github => {
                           let _ = twitch.send_chat_message(format!(
@@ -1029,29 +1155,22 @@ fn main() {
                           let _ = twitch.send_chat_message("owlkal1OC");
                         }
                         ChatCommands::SO | ChatCommands::ShoutOut => {
-                          let moderators = twitch
-                            .get_moderators()
-                            .unwrap()
-                            .data
-                            .iter()
-                            .map(|u| u.name.to_owned())
-                            .collect::<Vec<_>>();
+                          if message_data.moderator {
+                            println!("Moderator did a shoutout!");
+                          }
 
-                          if moderators.contains(&username)
-                            || username.eq_ignore_ascii_case(STREAM_ACCOUNT)
-                          {
-                            if parameters.len() > 0 {
-                              let _ = twitch.send_chat_message(format!(
-                                "{} is an awesome streamer, follow them at http://twitch.tv/{}",
-                                parameters[0], parameters[0],
-                              ));
-                              let _ = twitch.send_announcement(
-                                format!(
-                                  "{} is an awesome streamer, follow them at http://twitch.tv/{}",
-                                  parameters[0], parameters[0],
-                                ),
-                                None::<String>,
-                              );
+                          if parameters.len() > 0 {
+                            let moderators = twitch
+                              .get_moderators()
+                              .unwrap()
+                              .data
+                              .iter()
+                              .map(|u| u.name.to_owned())
+                              .collect::<Vec<_>>();
+                            if moderators.contains(&username)
+                              || username.eq_ignore_ascii_case(STREAM_ACCOUNT)
+                            {
+                              shoutout(&mut twitch, parameters[0].to_owned());
                             }
                           }
                         }
@@ -1138,13 +1257,16 @@ fn main() {
                               5.. => RankVariety::Uncommon,
                               _ => RankVariety::Common,
                             };
+
+                            let viewer_rank_text = format!(
+                              "{} is a {} variety viewer ({}P)",
+                              username, rank, viewer_num
+                            );
                             let _ = twitch.send_chat_message_with_reply(
-                              format!(
-                                "{} is a {} variety viewer ({}P)",
-                                username, rank, viewer_num
-                              ),
+                              viewer_rank_text.to_owned(),
                               Some(message_id),
                             );
+                            println!("{}", viewer_rank_text);
                           }
                         }
                         ChatCommands::Ranks => {
@@ -1182,43 +1304,47 @@ fn main() {
                         ChatCommands::Holee => {
                           if counter_cooldown.elapsed().as_secs() > 5 {
                             counter_cooldown = Instant::now();
-                            holy_counter += 1;
-                            let _ = twitch.send_chat_message(format!(
-                              "Owl has said holy {} times!",
-                              holy_counter
-                            ));
-                            let mut file = fs::File::create(COUNTERS_FILE).unwrap();
-                            let counters =
-                              format!("Holy {}\nHeckies {}", holy_counter, heckies_counter);
-                            file.write_all(counters.as_bytes()).unwrap();
-                            file.flush().unwrap();
+                            counter.holee += 1;
+                            if parameters.len() > 0 && parameters[0].contains("holee") {
+                              counter.holee += 1;
+                            }
+                            let holy_text = format!("has said holy {} times!", counter.holee);
+                            let _ = twitch.send_chat_message(holy_text.to_owned());
+                            println!("{}", holy_text);
+                            counter.save();
                           }
                         }
                         ChatCommands::Heckies => {
                           if counter_cooldown.elapsed().as_secs() > 5 {
                             counter_cooldown = Instant::now();
-                            heckies_counter += 1;
-                            let _ = twitch.send_chat_message(format!(
-                              "Owl has said heckies {} times!",
-                              heckies_counter
-                            ));
-                            let mut file = fs::File::create(COUNTERS_FILE).unwrap();
-                            let counters =
-                              format!("Holy {}\nHeckies {}", holy_counter, heckies_counter);
-                            file.write_all(counters.as_bytes()).unwrap();
-                            file.flush().unwrap();
+                            counter.heckies += 1;
+                            let heckies_text =
+                              format!("Owl has said heckies {} times!", counter.heckies);
+                            let _ = twitch.send_chat_message(heckies_text.to_owned());
+                            println!("{}", heckies_text);
+                            counter.save();
+                          }
+                        }
+                        ChatCommands::Spill => {
+                          if counter_cooldown.elapsed().as_secs() > 5 {
+                            counter_cooldown = Instant::now();
+                            counter.spilled += 1;
+
+                            let spilled_text =
+                              format!("Owl has spilled {} drinks!", counter.spilled);
+                            let _ = twitch.send_chat_message(spilled_text.to_owned());
+                            println!("{}", spilled_text);
+                            counter.save();
                           }
                         }
                       }
                     }
-
                     (None, Some(close), _) => {
                       let _ = twitch.send_chat_message(format!(
                         "Did you mean to type the !{:?} command",
                         close
                       ));
                     }
-
                     e => {
                       //println!("{:#?}", e);
                     }

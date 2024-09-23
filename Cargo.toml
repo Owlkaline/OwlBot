@@ -11,13 +11,13 @@ websocket = "0.27.1"
 rand = "*"
 enum_all_variants = "0.2.0"
 serde_json = "1.0.117"
-serde = "1.0.117"
-serde_derive = "1.0.117"
+serde = { version = "1.0.117", features = ["derive"] }
 curl = "0.4.46"
 sysinfo = "0.30.12"
 open = "5.1.4"
+twitcheventsub = "0.1.4"
 #twitch_eventsub = { git = "https://github.com/lilith645/TwitchEventSub-rs.git" }
-twitch_eventsub = { path = "../TwitchEventSub-rs" }
+#twitcheventsub-rs = { path = "../TwitchEventSub-rs/twitcheventsub-rs" }
 notcurses = "3.5.0"
 image = { version = "0.25.2", features = ["gif"] }
 attohttpc = "0.28.0"
@@ -25,3 +25,5 @@ crossterm = "0.27.0"
 base64 = "0.22.1"
 colored = "2"
 colors-transform = "0.2.11"
+log = "0.4"
+simple-logging = "*"
